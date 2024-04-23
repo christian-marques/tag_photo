@@ -1,0 +1,27 @@
+{
+  "name": "tag_photo",
+  "version": "1.0.0",
+  "description": "Projeto para inserir tag nas fotos, facilitando sua busca e ocultando as mesmas da galeria tradicional do celular, proporcionando privacidade para o ambiente de trabalho e não atrapalhando a vida pessoal com fotos de trabalho.",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.0.0",
+    "@capacitor/cli": "^6.0.0",
+    "@capacitor/core": "^6.0.0",
+    "capacitor": "^0.5.6",
+    "cors": "^2.8.5",
+    "express": "^4.19.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/christian-marques/tag_photo.git"
+  },
+  "author": "Christian Marques de Oliveira Silva",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/christian-marques/tag_photo/issues"
+  },
+  "homepage": "https://github.com/christian-marques/tag_photo#readme"
+}
