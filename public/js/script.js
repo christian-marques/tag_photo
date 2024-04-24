@@ -10,7 +10,6 @@ async function startCamera() {
         globalStream = await navigator.mediaDevices.getUserMedia({ video: true });
         const videoElement = document.getElementById('video');
         videoElement.srcObject = globalStream;
-        videoElement.style.display = ''; // Garante que o vídeo seja visível
         videoElement.play();
         console.log("Câmera iniciada");
     } catch (error) {
@@ -29,7 +28,6 @@ function stopCamera() {
     });
     const videoElement = document.getElementById('video');
     videoElement.srcObject = null;
-    videoElement.style.display = 'none'; // Esconde o vídeo quando a câmera é desligada
     globalStream = null;
     console.log("Câmera desligada");
 }
