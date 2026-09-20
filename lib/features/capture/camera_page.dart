@@ -25,6 +25,12 @@ class _CameraPageState extends State<CameraPage>
 
   XFile? _lastPhoto;
 
+  // Posição visual do indicador de foco.
+  Offset? _focusIndicatorPoint;
+
+  // Referência à área visível da câmera.
+  final GlobalKey _previewKey = GlobalKey();
+
   FlashMode _flashMode = FlashMode.off;
 
   bool _isFlashMenuOpen = false;
@@ -98,6 +104,7 @@ class _CameraPageState extends State<CameraPage>
       _isInitializing = true;
       _errorMessage = null;
       _isFlashMenuOpen = false;
+      _focusIndicatorPoint = null;
     });
 
     await oldController?.dispose();
@@ -210,6 +217,20 @@ class _CameraPageState extends State<CameraPage>
       });
 
       final photo = await controller.takePicture();
+
+      final file = File(photo.path);
+
+      final sizeInBytes = await file.length();
+
+      final sizeInMB = sizeInBytes / (1024 * 1024);
+
+      debugPrint(
+        'FOTO CAPTURADA | '
+        'Câmera: ${controller.description.name} | '
+        'Direção: ${controller.description.lensDirection} | '
+        'Tamanho: ${sizeInMB.toStringAsFixed(2)} MB | '
+        'Arquivo: ${photo.path}',
+      );
 
       if (!mounted) return;
 
@@ -504,6 +525,94 @@ class _CameraPageState extends State<CameraPage>
     );
   }
 
+  
+  // ==================================================
+  // FOCO POR TOQUE
+  // ==================================================
+
+  Future<void> _focusAt(TapDownDetails details) async {
+    final controller = _controller;
+
+    if (controller == null ||
+        !controller.value.isInitialized ||
+        _isInitializing ||
+        _isTakingPicture ||
+        _isShowingPhoto) {
+      return;
+    }
+
+    // Se o menu do flash estiver aberto,
+    // o toque na imagem apenas fecha o menu.
+
+    if (_isFlashMenuOpen) {
+      setState(() {
+        _isFlashMenuOpen = false;
+      });
+
+      return;
+    }
+
+    final renderObject =
+        _previewKey.currentContext?.findRenderObject();
+
+    if (renderObject is! RenderBox) {
+      return;
+    }
+
+    final size = renderObject.size;
+
+    if (size.width <= 0 || size.height <= 0) {
+      return;
+    }
+
+    // Posição do toque dentro da área da câmera.
+
+    final position = details.localPosition;
+
+    // Converte a posição para valores entre 0 e 1.
+
+    final normalizedPoint = Offset(
+      (position.dx / size.width)
+          .clamp(0.0, 1.0)
+          .toDouble(),
+
+      (position.dy / size.height)
+          .clamp(0.0, 1.0)
+          .toDouble(),
+    );
+
+    // Mostra imediatamente o indicador amarelo.
+
+    setState(() {
+      _focusIndicatorPoint = position;
+    });
+
+    // Solicita o foco no ponto selecionado.
+
+    try {
+      await controller.setFocusPoint(normalizedPoint);
+    } catch (error) {
+      debugPrint('Foco por toque indisponível: $error');
+
+      return;
+    }
+
+    // Ajusta também a medição da exposição.
+    // Algumas câmeras podem não oferecer esse recurso.
+
+    try {
+      if (controller == _controller) {
+        await controller.setExposurePoint(
+          normalizedPoint,
+        );
+      }
+    } catch (error) {
+      debugPrint(
+        'Ajuste de exposição indisponível: $error',
+      );
+    }
+  }
+
   // ==================================================
   // ZOOM
   // ==================================================
@@ -729,27 +838,69 @@ class _CameraPageState extends State<CameraPage>
                     )
 
                   else
-                    GestureDetector(
-                      onScaleStart: _onScaleStart,
-                      onScaleUpdate: _onScaleUpdate,
+                    Center(
+                      child: GestureDetector(
+                        key: _previewKey,
 
-                      // Ao tocar fora do menu,
-                      // ele é fechado.
+                        behavior: HitTestBehavior.opaque,
 
-                      onTap: () {
-                        if (_isFlashMenuOpen) {
-                          setState(() {
-                            _isFlashMenuOpen = false;
-                          });
-                        }
-                      },
+                        // Zoom por gesto de pinça.
 
-                      child: Center(
-                        child: CameraPreview(
-                          controller,
+                        onScaleStart: _onScaleStart,
+
+                        onScaleUpdate: _onScaleUpdate,
+
+                        // Foco ao tocar na imagem.
+
+                        onTapDown: _focusAt,
+
+                        child: Stack(
+                          alignment: Alignment.center,
+
+                          children: [
+                            // Imagem da câmera.
+
+                            CameraPreview(controller),
+
+                            // Indicador visual de foco.
+
+                            if (_focusIndicatorPoint != null)
+                              Positioned(
+                                left:
+                                    _focusIndicatorPoint!.dx - 26,
+
+                                top:
+                                    _focusIndicatorPoint!.dy - 26,
+
+                                child: IgnorePointer(
+                                  child: Container(
+                                    width: 52,
+                                    height: 52,
+
+                                    decoration: BoxDecoration(
+                                      border: Border.all(
+                                        color: Colors.amber,
+                                        width: 2,
+                                      ),
+
+                                      borderRadius:
+                                          BorderRadius.circular(8),
+                                    ),
+
+                                    child: const Center(
+                                      child: Icon(
+                                        Icons.add,
+                                        size: 16,
+                                        color: Colors.amber,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ],
                         ),
                       ),
-                    ),
+                    ),  
 
                   // ==================================
                   // CONTROLES DO ZOOM
