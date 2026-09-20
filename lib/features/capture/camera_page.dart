@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 
 import 'captured_photo_page.dart';
 import 'captured_video_page.dart';
+import '../../core/storage/media_storage.dart';
 
 class CameraPage extends StatefulWidget {
   const CameraPage({super.key});
@@ -17,6 +18,9 @@ class CameraPage extends StatefulWidget {
 
 class _CameraPageState extends State<CameraPage>
     with WidgetsBindingObserver {
+
+  final MediaStorage _mediaStorage = const MediaStorage();
+  
   CameraController? _controller;
 
   List<CameraDescription> _cameras = [];
@@ -292,20 +296,38 @@ class _CameraPageState extends State<CameraPage>
     });
 
     try {
-      final video = await controller.stopVideoRecording();
+      // Encerra a gravação e recebe o arquivo temporário.
+
+      final capturedVideo =
+          await controller.stopVideoRecording();
+
+      // Salva uma cópia permanente do vídeo.
+
+      final savedFile =
+          await _mediaStorage.saveCapturedMedia(
+        capturedVideo.path,
+        kind: MediaKind.video,
+      );
 
       if (!mounted) return;
 
       setState(() {
-        _lastVideo = video;
+        _lastVideo = XFile(savedFile.path);
         _isRecording = false;
       });
 
-      _showMessage('Vídeo capturado!');
+      debugPrint(
+        'Vídeo salvo em: ${savedFile.path}',
+      );
+
+      _showMessage('Vídeo salvo com sucesso!');
     } catch (error) {
-      _showMessage('Erro ao finalizar vídeo: $error');
+      _showMessage(
+        'Erro ao finalizar ou salvar vídeo: $error',
+      );
     } finally {
       _recordingTimer?.cancel();
+
       _recordingTimer = null;
       _recordingStartedAt = null;
 
@@ -375,30 +397,34 @@ class _CameraPageState extends State<CameraPage>
         _isFlashMenuOpen = false;
       });
 
-      final photo = await controller.takePicture();
+      // Captura a imagem com a câmera.
 
-      final file = File(photo.path);
+      final capturedPhoto =
+          await controller.takePicture();
 
-      final sizeInBytes = await file.length();
+      // Copia o arquivo temporário para o armazenamento
+      // permanente do aplicativo.
 
-      final sizeInMB = sizeInBytes / (1024 * 1024);
-
-      debugPrint(
-        'FOTO CAPTURADA | '
-        'Câmera: ${controller.description.name} | '
-        'Direção: ${controller.description.lensDirection} | '
-        'Tamanho: ${sizeInMB.toStringAsFixed(2)} MB | '
-        'Arquivo: ${photo.path}',
+      final savedFile =
+          await _mediaStorage.saveCapturedMedia(
+        capturedPhoto.path,
+        kind: MediaKind.photo,
       );
 
       if (!mounted) return;
 
       setState(() {
-        _lastPhoto = photo;
+        // A miniatura passa a usar o arquivo permanente.
+
+        _lastPhoto = XFile(savedFile.path);
       });
+
+      debugPrint(
+        'Foto salva em: ${savedFile.path}',
+      );
     } catch (error) {
       _showMessage(
-        'Erro ao capturar foto: $error',
+        'Erro ao capturar ou salvar foto: $error',
       );
     } finally {
       if (mounted) {
@@ -408,7 +434,7 @@ class _CameraPageState extends State<CameraPage>
       }
     }
   }
-
+  
   Future<void> _openLastVideo() async {
     final video = _lastVideo;
 

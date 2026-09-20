@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 
 import 'features/capture/camera_page.dart';
 
+import 'features/media_library/media_library_page.dart';
+
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -113,6 +115,31 @@ class HomePage extends StatelessWidget {
               icon: const Icon(Icons.search),
               label: const Text('Buscar fotos e vídeos'),
             ),
+
+            // MINHAS MÍDIAS
+            
+            const SizedBox(height: 16),
+
+            OutlinedButton.icon(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) =>
+                        const MediaLibraryPage(),
+                  ),
+                );
+              },
+
+              icon: const Icon(
+                Icons.perm_media_outlined,
+              ),
+
+              label: const Text(
+                'Minhas mídias',
+              ),
+            ),
+
           ],
         ),
       ),
