@@ -5,6 +5,8 @@ import 'features/capture/camera_page.dart';
 
 import 'features/media_library/media_library_page.dart';
 
+import 'features/search/search_page.dart';
+
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -111,13 +113,22 @@ class HomePage extends StatelessWidget {
             // BUSCAR MÍDIAS
 
             OutlinedButton.icon(
-              onPressed: null,
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const SearchPage(),
+                  ),
+                );
+              },
+
               icon: const Icon(Icons.search),
+
               label: const Text('Buscar fotos e vídeos'),
             ),
 
             // MINHAS MÍDIAS
-            
+
             const SizedBox(height: 16),
 
             OutlinedButton.icon(

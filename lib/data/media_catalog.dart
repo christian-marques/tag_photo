@@ -358,4 +358,97 @@ class MediaCatalog {
     );
   }
 
+  
+  // ==========================================
+  // BUSCAR MÍDIAS POR MÚLTIPLAS TAGS
+  // ==========================================
+
+  Future<List<SavedMedia>> searchMediaByTags(
+    List<String> tagIds,
+  ) async {
+    // Garante que mídias antigas sejam cadastradas.
+    await _indexExistingMedia();
+
+    // Sem filtros: retorna todas as mídias.
+    if (tagIds.isEmpty) {
+      return getSavedMedia();
+    }
+
+    // Elimina IDs repetidos.
+    final selectedIds = tagIds.toSet().toList();
+
+    // Busca as relações entre as tags selecionadas
+    // e as mídias cadastradas.
+
+    final relations = await (
+      _database.select(_database.mediaTags)
+        ..where(
+          (row) => row.tagId.isIn(selectedIds),
+        )
+    ).get();
+
+    // Organiza as tags encontradas por mídia.
+
+    final tagsByMedia = <String, Set<String>>{};
+
+    for (final relation in relations) {
+      tagsByMedia
+          .putIfAbsent(
+            relation.mediaId,
+            () => <String>{},
+          )
+          .add(relation.tagId);
+    }
+
+    // Mantém apenas mídias que possuem
+    // TODAS as tags selecionadas.
+
+    final matchingIds = tagsByMedia.entries
+        .where(
+          (entry) =>
+              entry.value.containsAll(selectedIds),
+        )
+        .map((entry) => entry.key)
+        .toList();
+
+    if (matchingIds.isEmpty) {
+      return [];
+    }
+
+    // Recupera os registros correspondentes.
+
+    final records = await (
+      _database.select(_database.mediaItems)
+        ..where(
+          (row) => row.id.isIn(matchingIds),
+        )
+        ..orderBy([
+          (row) => OrderingTerm.desc(
+            row.addedAt,
+          ),
+        ])
+    ).get();
+
+    final result = <SavedMedia>[];
+
+    for (final record in records) {
+      final file = File(record.localPath);
+
+      if (!await file.exists()) {
+        continue;
+      }
+
+      result.add(
+        SavedMedia(
+          file: file,
+          kind: record.kind == MediaKind.video.name
+              ? MediaKind.video
+              : MediaKind.photo,
+        ),
+      );
+    }
+
+    return result;
+  }
+
 }
