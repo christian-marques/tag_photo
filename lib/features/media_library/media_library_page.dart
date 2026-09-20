@@ -2,6 +2,8 @@
 import 'package:flutter/material.dart';
 
 import '../../core/storage/media_storage.dart';
+import '../../data/media_catalog.dart';
+
 import '../capture/captured_photo_page.dart';
 import '../capture/captured_video_page.dart';
 
@@ -15,7 +17,7 @@ class MediaLibraryPage extends StatefulWidget {
 
 class _MediaLibraryPageState
     extends State<MediaLibraryPage> {
-  final MediaStorage _storage = const MediaStorage();
+  final MediaCatalog _catalog = MediaCatalog.instance;
 
   late Future<List<SavedMedia>> _mediaFuture;
 
@@ -27,7 +29,7 @@ class _MediaLibraryPageState
   }
 
   void _loadMedia() {
-    _mediaFuture = _storage.getSavedMedia();
+    _mediaFuture = _catalog.getSavedMedia();
   }
 
   void _refresh() {

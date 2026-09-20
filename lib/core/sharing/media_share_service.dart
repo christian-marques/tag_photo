@@ -1,7 +1,6 @@
 
 import 'dart:io';
 
-import 'package:cross_file/cross_file.dart';
 import 'package:share_plus/share_plus.dart';
 
 class MediaShareService {

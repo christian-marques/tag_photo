@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'captured_photo_page.dart';
 import 'captured_video_page.dart';
 import '../../core/storage/media_storage.dart';
+import '../../data/media_catalog.dart';
 
 class CameraPage extends StatefulWidget {
   const CameraPage({super.key});
@@ -19,8 +20,8 @@ class CameraPage extends StatefulWidget {
 class _CameraPageState extends State<CameraPage>
     with WidgetsBindingObserver {
 
-  final MediaStorage _mediaStorage = const MediaStorage();
-  
+  final MediaCatalog _mediaCatalog = MediaCatalog.instance;
+
   CameraController? _controller;
 
   List<CameraDescription> _cameras = [];
@@ -304,7 +305,7 @@ class _CameraPageState extends State<CameraPage>
       // Salva uma cópia permanente do vídeo.
 
       final savedFile =
-          await _mediaStorage.saveCapturedMedia(
+          await _mediaCatalog.saveCapturedMedia(
         capturedVideo.path,
         kind: MediaKind.video,
       );
@@ -406,7 +407,7 @@ class _CameraPageState extends State<CameraPage>
       // permanente do aplicativo.
 
       final savedFile =
-          await _mediaStorage.saveCapturedMedia(
+          await _mediaCatalog.saveCapturedMedia(
         capturedPhoto.path,
         kind: MediaKind.photo,
       );
