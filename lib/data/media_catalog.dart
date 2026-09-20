@@ -9,6 +9,17 @@ import 'package:uuid/uuid.dart';
 import '../core/database/app_database.dart';
 import '../core/storage/media_storage.dart';
 
+
+class MediaTag {
+  const MediaTag({
+    required this.id,
+    required this.name,
+  });
+
+  final String id;
+  final String name;
+}
+
 class MediaCatalog {
   MediaCatalog._();
 
@@ -30,9 +41,11 @@ class MediaCatalog {
   Future<File> saveCapturedMedia(
     String sourcePath, {
     required MediaKind kind,
-  }) async {
 
-    // Primeiro preservamos o arquivo original.
+    // Tags selecionadas na câmera.
+    List<String> tagIds = const [],
+  }) async {
+    // Primeiro salva o arquivo original.
 
     final savedFile =
         await _storage.saveCapturedMedia(
@@ -40,16 +53,45 @@ class MediaCatalog {
       kind: kind,
     );
 
-    // Depois registramos o arquivo no banco.
-
     final now = DateTime.now();
 
-    await _registerMedia(
-      file: savedFile,
-      kind: kind,
-      capturedAt: now,
-      addedAt: now,
-    );
+    // Registra a mídia e suas tags no banco.
+
+    await _database.transaction(() async {
+      await _registerMedia(
+        file: savedFile,
+        kind: kind,
+        capturedAt: now,
+        addedAt: now,
+      );
+
+      if (tagIds.isEmpty) return;
+
+      // Recupera o ID da mídia recém-cadastrada.
+
+      final mediaRecord = await (
+        _database.select(_database.mediaItems)
+          ..where(
+            (media) => media.localPath.equals(
+              savedFile.path,
+            ),
+          )
+      ).getSingle();
+
+      // Associa todas as tags selecionadas à mídia.
+
+      for (final tagId in tagIds.toSet()) {
+        await _database
+            .into(_database.mediaTags)
+            .insert(
+              MediaTagsCompanion.insert(
+                mediaId: mediaRecord.id,
+                tagId: tagId,
+              ),
+              mode: InsertMode.insertOrIgnore,
+            );
+      }
+    });
 
     return savedFile;
   }
@@ -238,4 +280,82 @@ class MediaCatalog {
 
     return result;
   }
+
+
+  // ==========================================
+  // CONSULTAR TAGS EXISTENTES
+  // ==========================================
+
+  Future<List<MediaTag>> getAllTags() async {
+    final records =
+        await _database.select(_database.tags).get();
+
+    final result = records
+        .map(
+          (record) => MediaTag(
+            id: record.id,
+            name: record.name,
+          ),
+        )
+        .toList();
+
+    result.sort(
+      (a, b) => a.name.toLowerCase().compareTo(
+        b.name.toLowerCase(),
+      ),
+    );
+
+    return result;
+  }
+
+  // ==========================================
+  // CRIAR OU REUTILIZAR UMA TAG
+  // ==========================================
+
+  Future<MediaTag> createTag(String name) async {
+    // Remove espaços desnecessários.
+    final cleanName = name.trim().replaceAll(
+      RegExp(r'\s+'),
+      ' ',
+    );
+
+    if (cleanName.isEmpty) {
+      throw ArgumentError('O nome da tag não pode ser vazio.');
+    }
+
+    // Evita duplicatas como:
+    // "Preventiva", "preventiva" e " PREVENTIVA ".
+
+    final normalizedName = cleanName.toLowerCase();
+
+    final now = DateTime.now();
+
+    await _database.into(_database.tags).insert(
+      TagsCompanion.insert(
+        id: _uuid.v4(),
+        name: cleanName,
+        normalizedName: normalizedName,
+        createdAt: now,
+        updatedAt: now,
+      ),
+      mode: InsertMode.insertOrIgnore,
+    );
+
+    // Recupera a tag existente ou recém-criada.
+
+    final record = await (
+      _database.select(_database.tags)
+        ..where(
+          (tag) => tag.normalizedName.equals(
+            normalizedName,
+          ),
+        )
+    ).getSingle();
+
+    return MediaTag(
+      id: record.id,
+      name: record.name,
+    );
+  }
+
 }

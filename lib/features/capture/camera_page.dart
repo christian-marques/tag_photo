@@ -9,6 +9,7 @@ import 'captured_photo_page.dart';
 import 'captured_video_page.dart';
 import '../../core/storage/media_storage.dart';
 import '../../data/media_catalog.dart';
+import 'camera_tag_picker.dart';
 
 class CameraPage extends StatefulWidget {
   const CameraPage({super.key});
@@ -21,6 +22,9 @@ class _CameraPageState extends State<CameraPage>
     with WidgetsBindingObserver {
 
   final MediaCatalog _mediaCatalog = MediaCatalog.instance;
+
+  // Tags selecionadas para as próximas capturas.
+  List<MediaTag> _selectedTags = [];
 
   CameraController? _controller;
 
@@ -218,6 +222,48 @@ class _CameraPageState extends State<CameraPage>
   }
 
   
+  Future<void> _editTags() async {
+    if (_isInitializing ||
+        _isTakingPicture ||
+        _isRecording ||
+        _isChangingRecording) {
+      return;
+    }
+
+    final selected = await showModalBottomSheet<List<MediaTag>>(
+      context: context,
+
+      isScrollControlled: true,
+      useSafeArea: true,
+
+      builder: (sheetContext) {
+        return Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.viewInsetsOf(
+              sheetContext,
+            ).bottom,
+          ),
+
+          child: SizedBox(
+            height:
+                MediaQuery.sizeOf(sheetContext).height * 0.62,
+
+            child: CameraTagPicker(
+              initialSelection: _selectedTags,
+            ),
+          ),
+        );
+      },
+    );
+
+    if (!mounted || selected == null) return;
+
+    setState(() {
+      _selectedTags = selected;
+    });
+  }
+
+  
   // ==================================================
   // INICIAR GRAVAÇÃO
   // ==================================================
@@ -304,10 +350,16 @@ class _CameraPageState extends State<CameraPage>
 
       // Salva uma cópia permanente do vídeo.
 
+      
       final savedFile =
           await _mediaCatalog.saveCapturedMedia(
         capturedVideo.path,
+
         kind: MediaKind.video,
+
+        tagIds: _selectedTags
+            .map((tag) => tag.id)
+            .toList(),
       );
 
       if (!mounted) return;
@@ -406,10 +458,16 @@ class _CameraPageState extends State<CameraPage>
       // Copia o arquivo temporário para o armazenamento
       // permanente do aplicativo.
 
+
       final savedFile =
           await _mediaCatalog.saveCapturedMedia(
         capturedPhoto.path,
+
         kind: MediaKind.photo,
+
+        tagIds: _selectedTags
+            .map((tag) => tag.id)
+            .toList(),
       );
 
       if (!mounted) return;
@@ -1251,6 +1309,85 @@ class _CameraPageState extends State<CameraPage>
                     ),
                   ),
                 ],
+              ),
+            ),
+
+
+            
+            // ==========================================
+            // TAGS ATIVAS DA CÂMERA
+            // ==========================================
+
+            Container(
+              width: double.infinity,
+              color: Colors.black,
+
+              padding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 4,
+              ),
+
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+
+                child: Row(
+                  children: [
+                    // TAGS SELECIONADAS
+
+                    for (final tag in _selectedTags)
+                      Padding(
+                        padding: const EdgeInsets.only(right: 6),
+
+                        child: InputChip(
+                          label: Text(tag.name),
+
+                          labelStyle: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                          ),
+
+                          backgroundColor:
+                              const Color(0xFF303030),
+
+                          deleteIconColor: Colors.white,
+
+                          onDeleted: _isRecording
+                              ? null
+                              : () {
+                                  setState(() {
+                                    _selectedTags.removeWhere(
+                                      (item) => item.id == tag.id,
+                                    );
+                                  });
+                                },
+                        ),
+                      ),
+
+                    // ADICIONAR TAG
+
+                    TextButton.icon(
+                      onPressed: _isRecording ||
+                              _isInitializing ||
+                              _isTakingPicture
+                          ? null
+                          : _editTags,
+
+                      icon: const Icon(
+                        Icons.add,
+                        size: 18,
+                      ),
+
+                      label: const Text('Tag'),
+
+                      style: TextButton.styleFrom(
+                        foregroundColor: Colors.white,
+
+                        backgroundColor:
+                            const Color(0xFF303030),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
 

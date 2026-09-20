@@ -61,17 +61,57 @@ class MediaItems extends Table {
   Set<Column> get primaryKey => {id};
 }
 
+
+/// Catálogo de tags reutilizáveis.
+class Tags extends Table {
+  TextColumn get id => text()();
+
+  // Nome que aparece para o usuário.
+  TextColumn get name => text()();
+
+  // Usado para evitar duplicatas como:
+  // "Preventiva" e "preventiva".
+  TextColumn get normalizedName => text().unique()();
+
+  DateTimeColumn get createdAt => dateTime()();
+
+  DateTimeColumn get updatedAt => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
+/// Relação entre mídias e tags.
+///
+/// Uma mídia pode ter várias tags.
+/// Uma tag pode pertencer a várias mídias.
+class MediaTags extends Table {
+  TextColumn get mediaId =>
+      text().references(MediaItems, #id)();
+
+  TextColumn get tagId =>
+      text().references(Tags, #id)();
+
+  @override
+  Set<Column> get primaryKey => {
+    mediaId,
+    tagId,
+  };
+}
+
 // ==========================================
 // BANCO DE DADOS PRINCIPAL
 // ==========================================
 
+
 @DriftDatabase(
   tables: [
     MediaItems,
+    Tags,
+    MediaTags,
   ],
 )
 class AppDatabase extends _$AppDatabase {
-
   AppDatabase()
       : super(
           driftDatabase(
@@ -79,6 +119,35 @@ class AppDatabase extends _$AppDatabase {
           ),
         );
 
+  // A versão anterior tinha somente MediaItems.
+  // Esta versão acrescenta Tags e MediaTags.
+
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
+
+  @override
+  MigrationStrategy get migration {
+    return MigrationStrategy(
+      onCreate: (Migrator migrator) async {
+        // Instalação nova:
+        // cria todas as tabelas do aplicativo.
+        await migrator.createAll();
+      },
+
+      onUpgrade: (
+        Migrator migrator,
+        int from,
+        int to,
+      ) async {
+        if (from < 2) {
+          // Atualiza o banco existente
+          // sem apagar a tabela de mídias.
+
+          await migrator.createTable(tags);
+
+          await migrator.createTable(mediaTags);
+        }
+      },
+    );
+  }
 }
