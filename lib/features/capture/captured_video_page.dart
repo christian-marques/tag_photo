@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
+import '../../core/sharing/media_share_service.dart';
 
 class CapturedVideoPage extends StatefulWidget {
   const CapturedVideoPage({
@@ -58,6 +59,47 @@ class _CapturedVideoPageState extends State<CapturedVideoPage> {
     }
   }
 
+  
+  final MediaShareService _shareService =
+      const MediaShareService();
+
+  bool _isSharing = false;
+
+  Future<void> _shareVideo() async {
+    if (_isSharing) return;
+
+    setState(() {
+      _isSharing = true;
+    });
+
+    try {
+      // Pausa a reprodução antes de abrir
+      // o menu de compartilhamento.
+
+      await _controller?.pause();
+
+      await _shareService.shareMedia(
+        widget.videoPath,
+      );
+    } catch (error) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Não foi possível compartilhar o vídeo: $error',
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSharing = false;
+        });
+      }
+    }
+  }
+
   Future<void> _togglePlayback() async {
     final controller = _controller;
 
@@ -100,10 +142,27 @@ class _CapturedVideoPageState extends State<CapturedVideoPage> {
     return Scaffold(
       backgroundColor: Colors.black,
 
+      
       appBar: AppBar(
         backgroundColor: Colors.black,
+
         foregroundColor: Colors.white,
+
         title: const Text('Vídeo capturado'),
+
+        actions: [
+          IconButton(
+            tooltip: 'Compartilhar vídeo',
+
+            onPressed: _isSharing
+                ? null
+                : _shareVideo,
+
+            icon: const Icon(
+              Icons.share_outlined,
+            ),
+          ),
+        ],
       ),
 
       body: SafeArea(

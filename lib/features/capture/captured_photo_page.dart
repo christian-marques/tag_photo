@@ -3,13 +3,55 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
-class CapturedPhotoPage extends StatelessWidget {
+import '../../core/sharing/media_share_service.dart';
+
+class CapturedPhotoPage extends StatefulWidget {
   const CapturedPhotoPage({
     super.key,
     required this.photoPath,
   });
 
   final String photoPath;
+
+  @override
+  State<CapturedPhotoPage> createState() =>
+      _CapturedPhotoPageState();
+}
+
+class _CapturedPhotoPageState
+    extends State<CapturedPhotoPage> {
+  final MediaShareService _shareService =
+      const MediaShareService();
+
+  bool _isSharing = false;
+
+  Future<void> _sharePhoto() async {
+    if (_isSharing) return;
+
+    setState(() {
+      _isSharing = true;
+    });
+
+    try {
+      await _shareService.shareMedia(widget.photoPath);
+    } catch (error) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Não foi possível compartilhar a foto: $error',
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSharing = false;
+        });
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -19,8 +61,24 @@ class CapturedPhotoPage extends StatelessWidget {
       appBar: AppBar(
         backgroundColor: Colors.black,
         foregroundColor: Colors.white,
+
         title: const Text('Foto capturada'),
+
         centerTitle: true,
+
+        actions: [
+          IconButton(
+            tooltip: 'Compartilhar foto',
+
+            onPressed: _isSharing
+                ? null
+                : _sharePhoto,
+
+            icon: const Icon(
+              Icons.share_outlined,
+            ),
+          ),
+        ],
       ),
 
       body: SafeArea(
@@ -30,7 +88,8 @@ class CapturedPhotoPage extends StatelessWidget {
             maxScale: 5,
 
             child: Image.file(
-              File(photoPath),
+              File(widget.photoPath),
+
               fit: BoxFit.contain,
 
               errorBuilder: (
