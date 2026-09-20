@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 
 import '../../core/sharing/media_share_service.dart';
 
+import '../tags/media_tag_edit_button.dart';
+
 class CapturedPhotoPage extends StatefulWidget {
   const CapturedPhotoPage({
     super.key,
@@ -67,6 +69,12 @@ class _CapturedPhotoPageState
         centerTitle: true,
 
         actions: [
+          // Editar tags da fotografia.
+          MediaTagEditButton(
+            mediaPath: widget.photoPath,
+          ),
+
+          // Compartilhar fotografia.
           IconButton(
             tooltip: 'Compartilhar foto',
 
@@ -79,6 +87,7 @@ class _CapturedPhotoPageState
             ),
           ),
         ],
+      
       ),
 
       body: SafeArea(

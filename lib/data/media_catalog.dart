@@ -451,4 +451,102 @@ class MediaCatalog {
     return result;
   }
 
+  
+  // ==========================================
+  // CONSULTAR AS TAGS DE UMA MÍDIA
+  // ==========================================
+
+  Future<List<MediaTag>> getTagsForMedia(
+    String mediaPath,
+  ) async {
+    // Garante que mídias antigas estejam cadastradas.
+    await _indexExistingMedia();
+
+    final media = await (
+      _database.select(_database.mediaItems)
+        ..where(
+          (row) => row.localPath.equals(mediaPath),
+        )
+    ).getSingleOrNull();
+
+    if (media == null) {
+      throw StateError('Mídia não encontrada no banco.');
+    }
+
+    // Consulta as associações da mídia.
+    final relations = await (
+      _database.select(_database.mediaTags)
+        ..where(
+          (row) => row.mediaId.equals(media.id),
+        )
+    ).get();
+
+    final selectedIds = relations
+        .map((relation) => relation.tagId)
+        .toSet();
+
+    // Recupera os nomes das tags.
+    final allTags = await getAllTags();
+
+    return allTags
+        .where((tag) => selectedIds.contains(tag.id))
+        .toList();
+  }
+
+  // ==========================================
+  // SALVAR AS TAGS DE UMA MÍDIA EXISTENTE
+  // ==========================================
+
+  Future<void> setTagsForMedia(
+    String mediaPath,
+    List<String> tagIds,
+  ) async {
+    final media = await (
+      _database.select(_database.mediaItems)
+        ..where(
+          (row) => row.localPath.equals(mediaPath),
+        )
+    ).getSingleOrNull();
+
+    if (media == null) {
+      throw StateError('Mídia não encontrada no banco.');
+    }
+
+    final selectedIds = tagIds.toSet();
+
+    await _database.transaction(() async {
+      // Remove as associações anteriores.
+      await (
+        _database.delete(_database.mediaTags)
+          ..where(
+            (row) => row.mediaId.equals(media.id),
+          )
+      ).go();
+
+      // Salva a nova seleção.
+      for (final tagId in selectedIds) {
+        await _database
+            .into(_database.mediaTags)
+            .insert(
+              MediaTagsCompanion.insert(
+                mediaId: media.id,
+                tagId: tagId,
+              ),
+            );
+      }
+
+      // Atualiza a data de modificação.
+      await (
+        _database.update(_database.mediaItems)
+          ..where(
+            (row) => row.id.equals(media.id),
+          )
+      ).write(
+        MediaItemsCompanion(
+          updatedAt: Value(DateTime.now()),
+        ),
+      );
+    });
+  }
+
 }

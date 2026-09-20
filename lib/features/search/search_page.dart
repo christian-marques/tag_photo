@@ -127,6 +127,11 @@ class _SearchPageState extends State<SearchPage> {
         ),
       );
     }
+
+    // Reexecuta a busca ao voltar da visualização.
+    if (mounted) {
+      _updateResults();
+    }
   }
 
   // ==========================================

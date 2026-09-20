@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 import '../../core/sharing/media_share_service.dart';
+import '../tags/media_tag_edit_button.dart';
 
 class CapturedVideoPage extends StatefulWidget {
   const CapturedVideoPage({
@@ -151,6 +152,17 @@ class _CapturedVideoPageState extends State<CapturedVideoPage> {
         title: const Text('Vídeo capturado'),
 
         actions: [
+          // Editar tags do vídeo.
+          MediaTagEditButton(
+            mediaPath: widget.videoPath,
+
+            beforeOpen: () async {
+              // Pausa o vídeo antes de abrir o painel.
+              await _controller?.pause();
+            },
+          ),
+
+          // Compartilhar vídeo.
           IconButton(
             tooltip: 'Compartilhar vídeo',
 
@@ -163,6 +175,7 @@ class _CapturedVideoPageState extends State<CapturedVideoPage> {
             ),
           ),
         ],
+      
       ),
 
       body: SafeArea(
