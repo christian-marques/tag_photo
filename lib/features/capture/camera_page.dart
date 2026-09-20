@@ -6,6 +6,7 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 
 import 'captured_photo_page.dart';
+import 'captured_video_page.dart';
 
 class CameraPage extends StatefulWidget {
   const CameraPage({super.key});
@@ -24,6 +25,20 @@ class _CameraPageState extends State<CameraPage>
   int _cameraGeneration = 0;
 
   XFile? _lastPhoto;
+
+  XFile? _lastVideo;
+
+  // Define se estamos fotografando ou gravando.
+  bool _isVideoMode = false;
+
+  bool _isRecording = false;
+  bool _isChangingRecording = false;
+
+  DateTime? _recordingStartedAt;
+
+  Timer? _recordingTimer;
+
+  Duration _recordingDuration = Duration.zero;
 
   // Posição visual do indicador de foco.
   Offset? _focusIndicatorPoint;
@@ -119,7 +134,9 @@ class _CameraPageState extends State<CameraPage>
     final controller = CameraController(
       _cameras[_cameraIndex],
       ResolutionPreset.max,
-      enableAudio: false,
+
+      // Solicita microfone apenas no modo vídeo.
+      enableAudio: _isVideoMode,
     );
 
     try {
@@ -195,9 +212,151 @@ class _CameraPageState extends State<CameraPage>
     await controller?.dispose();
   }
 
+  
+  // ==================================================
+  // INICIAR GRAVAÇÃO
+  // ==================================================
+
+  Future<void> _startVideoRecording() async {
+    final controller = _controller;
+
+    if (controller == null ||
+        !controller.value.isInitialized ||
+        _isInitializing ||
+        _isRecording ||
+        _isChangingRecording) {
+      return;
+    }
+
+    setState(() {
+      _isChangingRecording = true;
+    });
+
+    try {
+      await controller.startVideoRecording();
+
+      if (!mounted || controller != _controller) {
+        return;
+      }
+
+      _recordingStartedAt = DateTime.now();
+
+      setState(() {
+        _isRecording = true;
+        _recordingDuration = Duration.zero;
+        _isFlashMenuOpen = false;
+      });
+
+      _recordingTimer?.cancel();
+
+      _recordingTimer = Timer.periodic(
+        const Duration(seconds: 1),
+        (_) {
+          if (!mounted || _recordingStartedAt == null) {
+            return;
+          }
+
+          setState(() {
+            _recordingDuration = DateTime.now().difference(
+              _recordingStartedAt!,
+            );
+          });
+        },
+      );
+    } catch (error) {
+      _showMessage('Erro ao iniciar vídeo: $error');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isChangingRecording = false;
+        });
+      }
+    }
+  }
+
+  // ==================================================
+  // PARAR GRAVAÇÃO
+  // ==================================================
+
+  Future<void> _stopVideoRecording() async {
+    final controller = _controller;
+
+    if (controller == null ||
+        !controller.value.isRecordingVideo ||
+        _isChangingRecording) {
+      return;
+    }
+
+    setState(() {
+      _isChangingRecording = true;
+    });
+
+    try {
+      final video = await controller.stopVideoRecording();
+
+      if (!mounted) return;
+
+      setState(() {
+        _lastVideo = video;
+        _isRecording = false;
+      });
+
+      _showMessage('Vídeo capturado!');
+    } catch (error) {
+      _showMessage('Erro ao finalizar vídeo: $error');
+    } finally {
+      _recordingTimer?.cancel();
+      _recordingTimer = null;
+      _recordingStartedAt = null;
+
+      if (mounted) {
+        setState(() {
+          _isRecording = false;
+          _isChangingRecording = false;
+        });
+      }
+    }
+  }
+
+  // ==================================================
+  // BOTÃO PRINCIPAL DE CAPTURA
+  // ==================================================
+
+  Future<void> _onCapturePressed() async {
+    if (_isVideoMode) {
+      if (_isRecording) {
+        await _stopVideoRecording();
+      } else {
+        await _startVideoRecording();
+      }
+    } else {
+      await _takePicture();
+    }
+  }
+
   // ==================================================
   // CAPTURA E VISUALIZAÇÃO
   // ==================================================
+
+  Future<void> _changeCaptureMode(bool videoMode) async {
+    if (_isInitializing ||
+        _isRecording ||
+        _isChangingRecording ||
+        _isTakingPicture ||
+        _isShowingPhoto) {
+      return;
+    }
+
+    if (_isVideoMode == videoMode) return;
+
+    setState(() {
+      _isVideoMode = videoMode;
+      _isFlashMenuOpen = false;
+    });
+
+    // Reinicializa a câmera com ou sem áudio.
+    await _initializeCamera();
+  }
 
   Future<void> _takePicture() async {
     final controller = _controller;
@@ -246,6 +405,42 @@ class _CameraPageState extends State<CameraPage>
         setState(() {
           _isTakingPicture = false;
         });
+      }
+    }
+  }
+
+  Future<void> _openLastVideo() async {
+    final video = _lastVideo;
+
+    if (video == null ||
+        _isRecording ||
+        _isChangingRecording ||
+        _isShowingPhoto ||
+        _isInitializing) {
+      return;
+    }
+
+    _isShowingPhoto = true;
+
+    // Libera a câmera durante a reprodução.
+    await _releaseCamera();
+
+    if (!mounted) return;
+
+    try {
+      await Navigator.push<void>(
+        context,
+        MaterialPageRoute(
+          builder: (context) => CapturedVideoPage(
+            videoPath: video.path,
+          ),
+        ),
+      );
+    } finally {
+      _isShowingPhoto = false;
+
+      if (mounted && _isInForeground) {
+        await _initializeCamera();
       }
     }
   }
@@ -767,6 +962,8 @@ class _CameraPageState extends State<CameraPage>
 
     controller?.dispose();
 
+    _recordingTimer?.cancel();
+
     super.dispose();
   }
 
@@ -936,6 +1133,101 @@ class _CameraPageState extends State<CameraPage>
               ),
             ),
 
+
+          // ========================================
+          // SELETOR FOTO / VÍDEO
+          // ========================================
+
+          Container(
+            height: 48,
+            color: Colors.black,
+
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+
+              children: [
+                TextButton(
+                  onPressed: _isRecording ||
+                          _isChangingRecording ||
+                          _isInitializing
+                      ? null
+                      : () => _changeCaptureMode(false),
+
+                  child: Text(
+                    'FOTO',
+
+                    style: TextStyle(
+                      color: !_isVideoMode
+                          ? Colors.amber
+                          : Colors.white70,
+
+                      fontWeight: !_isVideoMode
+                          ? FontWeight.bold
+                          : FontWeight.normal,
+                    ),
+                  ),
+                ),
+
+                const SizedBox(width: 28),
+
+                TextButton(
+                  onPressed: _isRecording ||
+                          _isChangingRecording ||
+                          _isInitializing
+                      ? null
+                      : () => _changeCaptureMode(true),
+
+                  child: Text(
+                    'VÍDEO',
+
+                    style: TextStyle(
+                      color: _isVideoMode
+                          ? Colors.amber
+                          : Colors.white70,
+
+                      fontWeight: _isVideoMode
+                          ? FontWeight.bold
+                          : FontWeight.normal,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // CONTADOR DURANTE A GRAVAÇÃO
+
+          if (_isRecording)
+            Container(
+              color: Colors.black,
+              padding: const EdgeInsets.symmetric(vertical: 4),
+
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+
+                children: [
+                  const Icon(
+                    Icons.fiber_manual_record,
+                    color: Colors.red,
+                    size: 12,
+                  ),
+
+                  const SizedBox(width: 6),
+
+                  Text(
+                    '${_recordingDuration.inMinutes.toString().padLeft(2, '0')}:'
+                    '${(_recordingDuration.inSeconds % 60).toString().padLeft(2, '0')}',
+
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+
             // ========================================
             // BARRA INFERIOR
             // ========================================
@@ -952,65 +1244,68 @@ class _CameraPageState extends State<CameraPage>
               child: Row(
                 children: [
                   // MINIATURA DA ÚLTIMA FOTO
-
                   Expanded(
                     child: Center(
                       child: GestureDetector(
-                        onTap: _lastPhoto == null
+                        onTap: _isRecording ||
+                                _isChangingRecording ||
+                                _isInitializing
                             ? null
-                            : _openLastPhoto,
+                            : _isVideoMode
+                                ? _openLastVideo
+                                : _openLastPhoto,
 
                         child: Container(
                           width: 58,
                           height: 58,
 
-                          clipBehavior:
-                              Clip.antiAlias,
+                          clipBehavior: Clip.antiAlias,
 
                           decoration: BoxDecoration(
-                            color:
-                                Colors.grey.shade900,
-
-                            borderRadius:
-                                BorderRadius.circular(
-                              10,
-                            ),
+                            color: Colors.grey.shade900,
+                            borderRadius: BorderRadius.circular(10),
                           ),
 
-                          child: _lastPhoto == null
-                              ? const Icon(
-                                  Icons.image_outlined,
-                                  color:
-                                      Colors.white54,
-                                )
-                              : Image.file(
-                                  File(
-                                    _lastPhoto!.path,
-                                  ),
-
-                                  fit: BoxFit.cover,
-                                ),
+                          child: _isVideoMode
+                              ? _lastVideo == null
+                                  ? const Icon(
+                                      Icons.videocam_outlined,
+                                      color: Colors.white54,
+                                    )
+                                  : const Icon(
+                                      Icons.play_circle_fill,
+                                      color: Colors.white,
+                                      size: 36,
+                                    )
+                              : _lastPhoto == null
+                                  ? const Icon(
+                                      Icons.image_outlined,
+                                      color: Colors.white54,
+                                    )
+                                  : Image.file(
+                                      File(_lastPhoto!.path),
+                                      fit: BoxFit.cover,
+                                    ),
                         ),
                       ),
                     ),
                   ),
 
                   // BOTÃO CIRCULAR DE CAPTURA
-
                   Expanded(
                     child: Center(
                       child: GestureDetector(
                         onTap: !cameraReady ||
-                                _isTakingPicture
+                                _isTakingPicture ||
+                                _isChangingRecording
                             ? null
-                            : _takePicture,
+                            : _onCapturePressed,
 
                         child: Container(
                           width: 84,
                           height: 84,
 
-                          alignment:
-                              Alignment.center,
+                          alignment: Alignment.center,
 
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
@@ -1021,19 +1316,29 @@ class _CameraPageState extends State<CameraPage>
                             ),
                           ),
 
-                          child: Container(
-                            width: 66,
-                            height: 66,
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 180),
 
-                            decoration:
-                                BoxDecoration(
-                              shape:
-                                  BoxShape.circle,
+                            width: _isVideoMode && _isRecording
+                                ? 28
+                                : 66,
 
-                              color:
-                                  _isTakingPicture
+                            height: _isVideoMode && _isRecording
+                                ? 28
+                                : 66,
+
+                            decoration: BoxDecoration(
+                              color: _isVideoMode
+                                  ? Colors.red
+                                  : _isTakingPicture
                                       ? Colors.grey
                                       : Colors.white,
+
+                              borderRadius: BorderRadius.circular(
+                                _isVideoMode && _isRecording
+                                    ? 6
+                                    : 40,
+                              ),
                             ),
                           ),
                         ),
@@ -1048,7 +1353,9 @@ class _CameraPageState extends State<CameraPage>
                       child: IconButton(
                         onPressed:
                             !cameraReady ||
-                                    _isTakingPicture
+                                    _isTakingPicture ||
+                                    _isRecording ||
+                                    _isChangingRecording
                                 ? null
                                 : _switchCamera,
 
