@@ -26,18 +26,17 @@ class _CameraPageState extends State<CameraPage>
   XFile? _lastPhoto;
 
   FlashMode _flashMode = FlashMode.off;
+
   bool _isFlashMenuOpen = false;
+  bool _isInitializing = true;
+  bool _isTakingPicture = false;
+  bool _isShowingPhoto = false;
+  bool _isInForeground = true;
 
   double _minZoom = 1;
   double _maxZoom = 1;
   double _currentZoom = 1;
   double _baseZoom = 1;
-
-  bool _isInitializing = true;
-  bool _isTakingPicture = false;
-  bool _isChangingCamera = false;
-  bool _isShowingPhoto = false;
-  bool _isInForeground = true;
 
   String? _errorMessage;
 
@@ -50,23 +49,21 @@ class _CameraPageState extends State<CameraPage>
     _setupCamera();
   }
 
-  // =================================================
-  // INICIALIZAÇÃO
-  // =================================================
+  // ==================================================
+  // INICIALIZAÇÃO DA CÂMERA
+  // ==================================================
 
   Future<void> _setupCamera() async {
     try {
-      final cameras = await availableCameras();
+      _cameras = await availableCameras();
 
       if (!mounted) return;
 
-      if (cameras.isEmpty) {
+      if (_cameras.isEmpty) {
         throw Exception('Nenhuma câmera encontrada.');
       }
 
-      _cameras = cameras;
-
-      final backIndex = cameras.indexWhere(
+      final backIndex = _cameras.indexWhere(
         (camera) =>
             camera.lensDirection == CameraLensDirection.back,
       );
@@ -100,6 +97,7 @@ class _CameraPageState extends State<CameraPage>
       _controller = null;
       _isInitializing = true;
       _errorMessage = null;
+      _isFlashMenuOpen = false;
     });
 
     await oldController?.dispose();
@@ -119,7 +117,12 @@ class _CameraPageState extends State<CameraPage>
 
     try {
       await controller.initialize();
-      await controller.setFlashMode(FlashMode.off);
+
+      try {
+        await controller.setFlashMode(FlashMode.off);
+      } catch (_) {
+        // Algumas câmeras não possuem flash.
+      }
 
       final minZoom =
           await controller.getMinZoomLevel();
@@ -152,7 +155,6 @@ class _CameraPageState extends State<CameraPage>
         _isFlashMenuOpen = false;
 
         _isInitializing = false;
-        _errorMessage = null;
       });
     } catch (error) {
       await controller.dispose();
@@ -169,10 +171,6 @@ class _CameraPageState extends State<CameraPage>
     }
   }
 
-  // =================================================
-  // LIBERAR A CÂMERA
-  // =================================================
-
   Future<void> _releaseCamera() async {
     ++_cameraGeneration;
 
@@ -183,15 +181,16 @@ class _CameraPageState extends State<CameraPage>
     if (mounted) {
       setState(() {
         _isInitializing = true;
+        _isFlashMenuOpen = false;
       });
     }
 
     await controller?.dispose();
   }
 
-  // =================================================
-  // CAPTURAR FOTO
-  // =================================================
+  // ==================================================
+  // CAPTURA E VISUALIZAÇÃO
+  // ==================================================
 
   Future<void> _takePicture() async {
     final controller = _controller;
@@ -207,6 +206,7 @@ class _CameraPageState extends State<CameraPage>
     try {
       setState(() {
         _isTakingPicture = true;
+        _isFlashMenuOpen = false;
       });
 
       final photo = await controller.takePicture();
@@ -229,10 +229,6 @@ class _CameraPageState extends State<CameraPage>
     }
   }
 
-  // =================================================
-  // VISUALIZAR FOTO
-  // =================================================
-
   Future<void> _openLastPhoto() async {
     final photo = _lastPhoto;
 
@@ -245,7 +241,7 @@ class _CameraPageState extends State<CameraPage>
 
     _isShowingPhoto = true;
 
-    // Desliga e libera a câmera antes de abrir a foto.
+    // Desliga a câmera antes de abrir a foto.
 
     await _releaseCamera();
 
@@ -261,8 +257,6 @@ class _CameraPageState extends State<CameraPage>
         ),
       );
     } finally {
-      // Quando o usuário volta, liga a câmera novamente.
-
       _isShowingPhoto = false;
 
       if (mounted && _isInForeground) {
@@ -271,14 +265,14 @@ class _CameraPageState extends State<CameraPage>
     }
   }
 
-  // =================================================
-  // TROCAR CÂMERA
-  // =================================================
+  // ==================================================
+  // TROCA DE CÂMERA
+  // ==================================================
 
   Future<void> _switchCamera() async {
     if (_isInitializing ||
         _isTakingPicture ||
-        _isChangingCamera) {
+        _cameras.isEmpty) {
       return;
     }
 
@@ -297,27 +291,14 @@ class _CameraPageState extends State<CameraPage>
 
     if (targetIndex < 0) return;
 
-    setState(() {
-      _isChangingCamera = true;
-    });
+    _cameraIndex = targetIndex;
 
-    try {
-      _cameraIndex = targetIndex;
-
-      await _initializeCamera();
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isChangingCamera = false;
-        });
-      }
-    }
+    await _initializeCamera();
   }
 
-  // =================================================
+  // ==================================================
   // FLASH
-  // =================================================
-
+  // ==================================================
 
   Future<void> _setFlashMode(FlashMode mode) async {
     final controller = _controller;
@@ -331,23 +312,21 @@ class _CameraPageState extends State<CameraPage>
     try {
       await controller.setFlashMode(mode);
 
-      if (!mounted || controller != _controller) {
+      if (!mounted ||
+          controller != _controller) {
         return;
       }
 
       setState(() {
         _flashMode = mode;
-
-        // Fecha a barra depois de selecionar a opção.
         _isFlashMenuOpen = false;
       });
     } catch (error) {
       _showMessage(
-        'Este modo de flash não está disponível nesta câmera.',
+        'Este modo de flash não está disponível.',
       );
     }
   }
- 
 
   IconData get _flashIcon {
     switch (_flashMode) {
@@ -365,59 +344,173 @@ class _CameraPageState extends State<CameraPage>
     }
   }
 
+  // ==================================================
+  // NOVO CABEÇALHO DO FLASH
+  // ==================================================
+
+  Widget _buildFlashHeader(bool cameraReady) {
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeInOut,
+      alignment: Alignment.topCenter,
+
+      child: Container(
+        width: double.infinity,
+        color: Colors.black,
+
+        padding: const EdgeInsets.fromLTRB(
+          16,
+          4,
+          16,
+          12,
+        ),
+
+        child: !_isFlashMenuOpen
+            ? SizedBox(
+                height: 48,
+
+                child: Align(
+                  alignment: Alignment.centerLeft,
+
+                  child: IconButton(
+                    tooltip: 'Configurar flash',
+
+                    onPressed: cameraReady
+                        ? () {
+                            setState(() {
+                              _isFlashMenuOpen = true;
+                            });
+                          }
+                        : null,
+
+                    style: IconButton.styleFrom(
+                      backgroundColor:
+                          const Color(0xFF292929),
+
+                      minimumSize: const Size(
+                        46,
+                        46,
+                      ),
+
+                      fixedSize: const Size(
+                        46,
+                        46,
+                      ),
+                    ),
+
+                    icon: Icon(
+                      _flashIcon,
+                      size: 25,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              )
+
+            // MENU ABERTO:
+            // O ÍCONE DESAPARECE E A BARRA TOMA SEU LUGAR.
+
+            : Container(
+                height: 64,
+
+                alignment: Alignment.center,
+
+                decoration: BoxDecoration(
+                  color: const Color(0xFF292929),
+
+                  borderRadius:
+                      BorderRadius.circular(12),
+                ),
+
+                child: Row(
+                  children: [
+                    _flashOption(
+                      mode: FlashMode.off,
+                      label: 'Desativado',
+                    ),
+
+                    _flashOption(
+                      mode: FlashMode.always,
+                      label: 'Ativado',
+                    ),
+
+                    _flashOption(
+                      mode: FlashMode.auto,
+                      label: 'Automático',
+                    ),
+
+                    _flashOption(
+                      mode: FlashMode.torch,
+                      label: 'Sempre ativado',
+                    ),
+                  ],
+                ),
+              ),
+      ),
+    );
+  }
+
+  // ==================================================
+  // OPÇÃO INDIVIDUAL DO FLASH
+  // ==================================================
+
   Widget _flashOption({
     required FlashMode mode,
     required String label,
   }) {
     final isSelected = _flashMode == mode;
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 3),
+    return Expanded(
+      child: InkWell(
+        onTap: () => _setFlashMode(mode),
 
-      child: TextButton(
-        onPressed: () => _setFlashMode(mode),
+        borderRadius: BorderRadius.circular(8),
 
-        style: TextButton.styleFrom(
-          foregroundColor: isSelected
-              ? Colors.amber
-              : Colors.white,
+        child: SizedBox(
+          height: 64,
 
-          backgroundColor: isSelected
-              ? Colors.white12
-              : Colors.transparent,
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 2,
+              ),
 
-          padding: const EdgeInsets.symmetric(
-            horizontal: 12,
-            vertical: 12,
-          ),
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
 
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8),
-          ),
-        ),
+                child: Text(
+                  label,
 
-        child: Text(
-          label,
+                  maxLines: 1,
+                  softWrap: false,
 
-          maxLines: 1,
+                  style: TextStyle(
+                    fontSize: 12,
 
-          style: TextStyle(
-            fontSize: 13,
+                    color: isSelected
+                        ? Colors.amber
+                        : Colors.white,
 
-            fontWeight: isSelected
-                ? FontWeight.bold
-                : FontWeight.normal,
+                    fontWeight: isSelected
+                        ? FontWeight.w600
+                        : FontWeight.normal,
+                  ),
+                ),
+              ),
+            ),
           ),
         ),
       ),
     );
   }
 
-  // =================================================
+  // ==================================================
   // ZOOM
-  // =================================================
+  // ==================================================
 
-  Future<void> _setZoom(double requestedZoom) async {
+  Future<void> _setZoom(
+    double requestedZoom,
+  ) async {
     final controller = _controller;
 
     if (controller == null ||
@@ -433,7 +526,8 @@ class _CameraPageState extends State<CameraPage>
     try {
       await controller.setZoomLevel(zoom);
 
-      if (!mounted || controller != _controller) {
+      if (!mounted ||
+          controller != _controller) {
         return;
       }
 
@@ -445,17 +539,72 @@ class _CameraPageState extends State<CameraPage>
     }
   }
 
-  void _onScaleStart(ScaleStartDetails details) {
+  void _onScaleStart(
+    ScaleStartDetails details,
+  ) {
     _baseZoom = _currentZoom;
   }
 
-  void _onScaleUpdate(ScaleUpdateDetails details) {
-    _setZoom(_baseZoom * details.scale);
+  void _onScaleUpdate(
+    ScaleUpdateDetails details,
+  ) {
+    _setZoom(
+      _baseZoom * details.scale,
+    );
   }
 
-  // =================================================
+  Widget _zoomButton(double zoom) {
+    final selected =
+        (_currentZoom - zoom).abs() < 0.05;
+
+    final zoomLabel =
+        zoom == zoom.roundToDouble()
+            ? zoom.toStringAsFixed(0)
+            : zoom.toStringAsFixed(1);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(
+        horizontal: 5,
+      ),
+
+      child: GestureDetector(
+        onTap: () => _setZoom(zoom),
+
+        child: Container(
+          width: selected ? 46 : 40,
+          height: selected ? 46 : 40,
+
+          alignment: Alignment.center,
+
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+
+            color: selected
+                ? const Color(0xFF36302A)
+                : Colors.black54,
+          ),
+
+          child: Text(
+            '$zoomLabel×',
+
+            style: TextStyle(
+              color: selected
+                  ? Colors.amber
+                  : Colors.white,
+
+              fontWeight: selected
+                  ? FontWeight.bold
+                  : FontWeight.normal,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ==================================================
   // MENSAGENS
-  // =================================================
+  // ==================================================
 
   void _showMessage(String message) {
     if (!mounted) return;
@@ -468,9 +617,9 @@ class _CameraPageState extends State<CameraPage>
     );
   }
 
-  // =================================================
+  // ==================================================
   // CICLO DE VIDA
-  // =================================================
+  // ==================================================
 
   @override
   void didChangeAppLifecycleState(
@@ -480,10 +629,12 @@ class _CameraPageState extends State<CameraPage>
       _isInForeground = false;
 
       unawaited(_releaseCamera());
-    } else if (state == AppLifecycleState.resumed) {
+    } else if (
+        state == AppLifecycleState.resumed
+    ) {
       _isInForeground = true;
 
-      if (!_isShowingPhoto && !_isChangingCamera) {
+      if (!_isShowingPhoto) {
         if (_cameras.isEmpty) {
           unawaited(_setupCamera());
         } else {
@@ -510,13 +661,18 @@ class _CameraPageState extends State<CameraPage>
     super.dispose();
   }
 
-  // =================================================
-  // INTERFACE
-  // =================================================
+  // ==================================================
+  // INTERFACE PRINCIPAL
+  // ==================================================
 
   @override
   Widget build(BuildContext context) {
     final controller = _controller;
+
+    final cameraReady =
+        controller != null &&
+        controller.value.isInitialized &&
+        !_isInitializing;
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -524,6 +680,7 @@ class _CameraPageState extends State<CameraPage>
       appBar: AppBar(
         backgroundColor: Colors.black,
         foregroundColor: Colors.white,
+
         title: const Text('Câmera'),
         centerTitle: true,
       ),
@@ -531,161 +688,74 @@ class _CameraPageState extends State<CameraPage>
       body: SafeArea(
         child: Column(
           children: [
-            // ÁREA PRINCIPAL DA CÂMERA
+            // ========================================
+            // CABEÇALHO PRETO INTEGRADO AO FLASH
+            // ========================================
+
+            _buildFlashHeader(cameraReady),
+
+            // ========================================
+            // PREVIEW DA CÂMERA
+            // ========================================
 
             Expanded(
               child: Stack(
                 fit: StackFit.expand,
+
                 children: [
                   if (_errorMessage != null)
                     Center(
                       child: Padding(
-                        padding: const EdgeInsets.all(24),
+                        padding: const EdgeInsets.all(
+                          24,
+                        ),
+
                         child: Text(
                           _errorMessage!,
+
                           textAlign: TextAlign.center,
+
                           style: const TextStyle(
                             color: Colors.white,
                           ),
                         ),
                       ),
                     )
-                  else if (controller == null ||
-                      !controller.value.isInitialized)
+
+                  else if (!cameraReady)
                     const Center(
-                      child: CircularProgressIndicator(),
+                      child:
+                          CircularProgressIndicator(),
                     )
+
                   else
                     GestureDetector(
                       onScaleStart: _onScaleStart,
                       onScaleUpdate: _onScaleUpdate,
 
-                      child: LayoutBuilder(
-                        builder: (context, constraints) {
-                          final aspectRatio =
-                              controller.value.aspectRatio;
+                      // Ao tocar fora do menu,
+                      // ele é fechado.
 
-                          final isPortrait =
-                              constraints.maxHeight >
-                              constraints.maxWidth;
-
-                          final previewWidth = isPortrait
-                              ? constraints.maxWidth
-                              : constraints.maxHeight *
-                                  aspectRatio;
-
-                          final previewHeight = isPortrait
-                              ? constraints.maxWidth *
-                                  aspectRatio
-                              : constraints.maxHeight;
-
-                          return ClipRect(
-                            child: FittedBox(
-                              fit: BoxFit.cover,
-                              child: SizedBox(
-                                width: previewWidth,
-                                height: previewHeight,
-
-                                child: CameraPreview(
-                                  controller,
-                                ),
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-
-                  // FLASH NO CANTO SUPERIOR ESQUERDO
-
-                  if (controller != null &&
-                      controller.value.isInitialized)
-                    Positioned(
-                      top: 16,
-                      left: 16,
-
-                      child: GestureDetector(
-                        onTap: () {
+                      onTap: () {
+                        if (_isFlashMenuOpen) {
                           setState(() {
-                            _isFlashMenuOpen = !_isFlashMenuOpen;
+                            _isFlashMenuOpen = false;
                           });
-                        },
+                        }
+                      },
 
-                        child: Container(
-                          width: 48,
-                          height: 48,
-
-                          decoration: const BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: Color(0xCC292929),
-                          ),
-
-                          child: Icon(
-                            _flashIcon,
-                            color: Colors.white,
-                            size: 26,
-                          ),
+                      child: Center(
+                        child: CameraPreview(
+                          controller,
                         ),
                       ),
                     ),
 
-                  // BARRA HORIZONTAL DE OPÇÕES DO FLASH
+                  // ==================================
+                  // CONTROLES DO ZOOM
+                  // ==================================
 
-                  if (_isFlashMenuOpen &&
-                      controller != null &&
-                      controller.value.isInitialized)
-                    Positioned(
-                      top: 76,
-                      left: 12,
-                      right: 12,
-
-                      child: Container(
-                        height: 56,
-
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF292929),
-
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-
-                        child: SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.start,
-
-                            children: [
-                              _flashOption(
-                                mode: FlashMode.off,
-                                label: 'Desativado',
-                              ),
-
-                              _flashOption(
-                                mode: FlashMode.always,
-                                label: 'Ativado',
-                              ),
-
-                              _flashOption(
-                                mode: FlashMode.auto,
-                                label: 'Automático',
-                              ),
-
-                              _flashOption(
-                                mode: FlashMode.torch,
-                                label: 'Sempre ativado',
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-
-
-
-                  // CONTROLES DE ZOOM
-
-                  if (controller != null &&
-                      controller.value.isInitialized)
+                  if (cameraReady)
                     Positioned(
                       bottom: 16,
                       left: 0,
@@ -715,19 +785,22 @@ class _CameraPageState extends State<CameraPage>
               ),
             ),
 
+            // ========================================
             // BARRA INFERIOR
+            // ========================================
 
             Container(
               height: 110,
               color: Colors.black,
 
-              padding: const EdgeInsets.symmetric(
+              padding:
+                  const EdgeInsets.symmetric(
                 horizontal: 16,
               ),
 
               child: Row(
                 children: [
-                  // MINIATURA
+                  // MINIATURA DA ÚLTIMA FOTO
 
                   Expanded(
                     child: Center(
@@ -740,22 +813,30 @@ class _CameraPageState extends State<CameraPage>
                           width: 58,
                           height: 58,
 
+                          clipBehavior:
+                              Clip.antiAlias,
+
                           decoration: BoxDecoration(
-                            color: Colors.grey.shade900,
+                            color:
+                                Colors.grey.shade900,
 
                             borderRadius:
-                                BorderRadius.circular(10),
+                                BorderRadius.circular(
+                              10,
+                            ),
                           ),
-
-                          clipBehavior: Clip.antiAlias,
 
                           child: _lastPhoto == null
                               ? const Icon(
                                   Icons.image_outlined,
-                                  color: Colors.white54,
+                                  color:
+                                      Colors.white54,
                                 )
                               : Image.file(
-                                  File(_lastPhoto!.path),
+                                  File(
+                                    _lastPhoto!.path,
+                                  ),
+
                                   fit: BoxFit.cover,
                                 ),
                         ),
@@ -763,19 +844,22 @@ class _CameraPageState extends State<CameraPage>
                     ),
                   ),
 
-                  // BOTÃO DE CAPTURA
+                  // BOTÃO CIRCULAR DE CAPTURA
 
                   Expanded(
                     child: Center(
                       child: GestureDetector(
-                        onTap: _isTakingPicture ||
-                                _isInitializing
+                        onTap: !cameraReady ||
+                                _isTakingPicture
                             ? null
                             : _takePicture,
 
                         child: Container(
                           width: 84,
                           height: 84,
+
+                          alignment:
+                              Alignment.center,
 
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
@@ -786,18 +870,19 @@ class _CameraPageState extends State<CameraPage>
                             ),
                           ),
 
-                          alignment: Alignment.center,
-
                           child: Container(
                             width: 66,
                             height: 66,
 
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
+                            decoration:
+                                BoxDecoration(
+                              shape:
+                                  BoxShape.circle,
 
-                              color: _isTakingPicture
-                                  ? Colors.grey
-                                  : Colors.white,
+                              color:
+                                  _isTakingPicture
+                                      ? Colors.grey
+                                      : Colors.white,
                             ),
                           ),
                         ),
@@ -805,23 +890,27 @@ class _CameraPageState extends State<CameraPage>
                     ),
                   ),
 
-                  // TROCA DE CÂMERA
+                  // TROCAR CÂMERA
 
                   Expanded(
                     child: Center(
                       child: IconButton(
+                        onPressed:
+                            !cameraReady ||
+                                    _isTakingPicture
+                                ? null
+                                : _switchCamera,
+
                         icon: const Icon(
-                          Icons.cameraswitch_outlined,
+                          Icons
+                              .cameraswitch_outlined,
                           size: 34,
                         ),
 
                         color: Colors.white,
 
-                        onPressed: _isInitializing ||
-                                _isChangingCamera ||
-                                _isTakingPicture
-                            ? null
-                            : _switchCamera,
+                        disabledColor:
+                            Colors.white38,
                       ),
                     ),
                   ),
@@ -829,56 +918,6 @@ class _CameraPageState extends State<CameraPage>
               ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-
-  // =================================================
-  // BOTÃO DE ZOOM
-  // =================================================
-
-  Widget _zoomButton(double zoom) {
-    final selected =
-        (_currentZoom - zoom).abs() < 0.05;
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 5,
-      ),
-
-      child: GestureDetector(
-        onTap: () => _setZoom(zoom),
-
-        child: Container(
-          width: selected ? 46 : 40,
-          height: selected ? 46 : 40,
-
-          alignment: Alignment.center,
-
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-
-            color: selected
-                ? const Color(0xFF36302A)
-                : Colors.black54,
-          ),
-
-          child: Text(
-            '${zoom.toStringAsFixed(
-              zoom == zoom.roundToDouble() ? 0 : 1,
-            )}×',
-
-            style: TextStyle(
-              color: selected
-                  ? Colors.amber
-                  : Colors.white,
-
-              fontWeight: selected
-                  ? FontWeight.bold
-                  : FontWeight.normal,
-            ),
-          ),
         ),
       ),
     );
