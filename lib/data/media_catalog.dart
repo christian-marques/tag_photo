@@ -44,8 +44,23 @@ class MediaGroup {
 class GroupMedia {
   const GroupMedia({required this.media, required this.date});
   final SavedMedia media;
-  final DateTime date;
+  final DateTime? date;
 }
+
+class MediaSearchEntry {
+  const MediaSearchEntry({
+    required this.media,
+    required this.groupId,
+    required this.capturedAt,
+    required this.tags,
+  });
+
+  final SavedMedia media;
+  final String? groupId;
+  final DateTime? capturedAt;
+  final List<MediaTag> tags;
+}
+
 
 class MediaCatalog {
   MediaCatalog._();
@@ -73,6 +88,7 @@ class MediaCatalog {
     List<String> tagIds = const [],
     String? groupId,
     bool importedFromGallery = false,
+    DateTime? originalCapturedAt,
   }) async {
     // Primeiro salva o arquivo original.
 
@@ -90,7 +106,7 @@ class MediaCatalog {
       await _registerMedia(
         file: savedFile,
         kind: kind,
-        capturedAt: importedFromGallery ? null : now,
+        capturedAt: importedFromGallery ? originalCapturedAt : now,
         addedAt: now,
         groupId: groupId,
       );
@@ -576,8 +592,8 @@ class MediaCatalog {
     final allMedia = await _database.select(_database.mediaItems).get();
     return groups.map((group) {
       final items = allMedia.where((m) => m.groupId == group.id).toList();
-      final dates = items.map((m) => m.capturedAt ?? m.addedAt).toList()
-        ..sort();
+      final dates = items.where((m) => m.capturedAt != null)
+          .map((m) => m.capturedAt!).toList()..sort();
       return MediaGroup(
         id: group.id,
         name: group.name,
@@ -621,8 +637,13 @@ class MediaCatalog {
     final rows = await (_database.select(_database.mediaItems)
           ..where((m) => m.groupId.equals(groupId)))
         .get();
-    rows.sort((a, b) => (b.capturedAt ?? b.addedAt)
-        .compareTo(a.capturedAt ?? a.addedAt));
+    rows.sort((a, b) {
+      final left = a.capturedAt;
+      final right = b.capturedAt;
+      if (left == null) return right == null ? 0 : 1;
+      if (right == null) return -1;
+      return right.compareTo(left);
+    });
     final output = <GroupMedia>[];
     for (final row in rows) {
       final file = File(row.localPath);
@@ -631,7 +652,7 @@ class MediaCatalog {
         media: SavedMedia(file: file,
           kind: row.kind == MediaKind.video.name
               ? MediaKind.video : MediaKind.photo),
-        date: row.capturedAt ?? row.addedAt,
+        date: row.capturedAt,
       ));
     }
     return output;
@@ -656,5 +677,97 @@ class MediaCatalog {
     });
   }
 
+
+  /// Lista para a busca: tags individuais + tags herdadas do grupo.
+  /// Datas desconhecidas permanecem nulas; addedAt nunca vira data da foto.
+  Future<List<MediaSearchEntry>> searchEntries(List<String> selectedTagIds) async {
+    await _indexExistingMedia();
+    final rows = await _database.select(_database.mediaItems).get();
+    final personal = await _database.select(_database.mediaTags).get();
+    final inherited = await _database.select(_database.groupTags).get();
+    final allTags = await getAllTags();
+    final byId = {for (final tag in allTags) tag.id: tag};
+    final own = <String, Set<String>>{};
+    final byGroup = <String, Set<String>>{};
+    for (final link in personal) {
+      own.putIfAbsent(link.mediaId, () => <String>{}).add(link.tagId);
+    }
+    for (final link in inherited) {
+      byGroup.putIfAbsent(link.groupId, () => <String>{}).add(link.tagId);
+    }
+    final selected = selectedTagIds.toSet();
+    final result = <MediaSearchEntry>[];
+    for (final row in rows) {
+      final ids = <String>{...?own[row.id], ...?byGroup[row.groupId]};
+      if (!ids.containsAll(selected)) continue;
+      final file = File(row.localPath);
+      if (!await file.exists()) continue;
+      result.add(MediaSearchEntry(
+        media: SavedMedia(
+          file: file,
+          kind: row.kind == MediaKind.video.name ? MediaKind.video : MediaKind.photo,
+        ),
+        groupId: row.groupId,
+        capturedAt: row.capturedAt,
+        tags: [for (final id in ids) if (byId.containsKey(id)) byId[id]!],
+      ));
+    }
+    result.sort((a, b) {
+      if (a.capturedAt == null) return b.capturedAt == null ? 0 : 1;
+      if (b.capturedAt == null) return -1;
+      return b.capturedAt!.compareTo(a.capturedAt!);
+    });
+    return result;
+  }
+
+  Future<DateTime?> getMediaCapturedAt(String mediaPath) async {
+    await _indexExistingMedia();
+    final row = await (_database.select(_database.mediaItems)
+      ..where((m) => m.localPath.equals(mediaPath))).getSingleOrNull();
+    if (row == null) throw StateError('Mídia não cadastrada.');
+    return row.capturedAt;
+  }
+
+  Future<void> setMediaCapturedAt(String mediaPath, DateTime? date) async {
+    await _indexExistingMedia();
+    final now = DateTime.now();
+    await (_database.update(_database.mediaItems)
+      ..where((m) => m.localPath.equals(mediaPath))).write(
+      MediaItemsCompanion(capturedAt: Value(date), updatedAt: Value(now)),
+    );
+  }
+
+  /// Apenas desfaz a associação: não apaga arquivos ou tags próprias.
+  Future<void> removeMediaFromGroup(String mediaPath) async {
+    await _indexExistingMedia();
+    final now = DateTime.now();
+    await (_database.update(_database.mediaItems)
+      ..where((m) => m.localPath.equals(mediaPath))).write(
+      MediaItemsCompanion(groupId: const Value(null), updatedAt: Value(now)),
+    );
+  }
+
+  Future<void> renameGroup(String groupId, String newName) async {
+    final name = newName.trim();
+    if (name.isEmpty) throw ArgumentError('Informe um nome para o grupo.');
+    await (_database.update(_database.photoGroups)
+      ..where((g) => g.id.equals(groupId))).write(
+      PhotoGroupsCompanion(name: Value(name), updatedAt: Value(DateTime.now())),
+    );
+  }
+
+  /// Exclui somente o agrupamento; mídias e tags individuais continuam salvas.
+  Future<void> deleteGroup(String groupId) async {
+    await _database.transaction(() async {
+      await (_database.update(_database.mediaItems)
+        ..where((m) => m.groupId.equals(groupId))).write(
+        MediaItemsCompanion(groupId: const Value(null), updatedAt: Value(DateTime.now())),
+      );
+      await (_database.delete(_database.groupTags)
+        ..where((g) => g.groupId.equals(groupId))).go();
+      await (_database.delete(_database.photoGroups)
+        ..where((g) => g.id.equals(groupId))).go();
+    });
+  }
 
 }

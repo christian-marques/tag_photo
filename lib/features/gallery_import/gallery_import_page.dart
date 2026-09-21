@@ -26,6 +26,7 @@ class _GalleryImportPageState extends State<GalleryImportPage> {
   bool _busy = false;
   int _progress = 0;
   String? _message;
+  DateTime? _importDate;
 
   @override
   void initState() {
@@ -95,6 +96,24 @@ class _GalleryImportPageState extends State<GalleryImportPage> {
     }
   }
 
+  Future<void> _chooseImportDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _importDate ?? DateTime.now(),
+      firstDate: DateTime(1900),
+      lastDate: DateTime(2100),
+      helpText: 'Data original das mídias selecionadas',
+    );
+    if (!mounted || picked == null) return;
+    setState(() => _importDate = picked);
+  }
+
+  String _dateLabel(DateTime? date) {
+    if (date == null) return 'Data original: não informada';
+    return 'Data original: ${date.day.toString().padLeft(2, '0')}/'
+      '${date.month.toString().padLeft(2, '0')}/${date.year}';
+  }
+
   MediaKind _kind(XFile file) {
     const videoExts = {'.mp4', '.mov', '.m4v', '.3gp', '.webm', '.avi'};
     final extension = p.extension(file.name).toLowerCase();
@@ -123,6 +142,7 @@ class _GalleryImportPageState extends State<GalleryImportPage> {
               .map((tag) => tag.id).toList(),
           groupId: _group?.id,
           importedFromGallery: true,
+          originalCapturedAt: _importDate,
         );
         imported++;
       } catch (error) {
@@ -175,6 +195,21 @@ class _GalleryImportPageState extends State<GalleryImportPage> {
                   onPressed: _busy ? null : _editTags),
             ],
           ),
+          const SizedBox(height: 8),
+          Row(children: [
+            Expanded(child: OutlinedButton.icon(
+              onPressed: _busy ? null : _chooseImportDate,
+              icon: const Icon(Icons.calendar_today_outlined),
+              label: Text(_dateLabel(_importDate)),
+            )),
+            if (_importDate != null) IconButton(
+              tooltip: 'Deixar data não informada',
+              onPressed: _busy ? null : () => setState(() => _importDate = null),
+              icon: const Icon(Icons.close),
+            ),
+          ]),
+          const Text('A data informada será aplicada a todas as mídias desta importação. '
+              'Se forem de dias diferentes, corrija cada uma depois pelo menu ⋮ da mídia.'),
           const SizedBox(height: 16),
           Text('${_picked.length} mídias selecionadas'),
           const SizedBox(height: 8),
@@ -216,8 +251,8 @@ class _GalleryImportPageState extends State<GalleryImportPage> {
           ),
           const SizedBox(height: 12),
           const Text('Os originais são copiados para o app sem redimensionamento. '
-              'Neste protótipo a data de mídias importadas é a data do cadastro; '
-              'a leitura da data original (EXIF) ficará para outra etapa.'),
+              'Neste protótipo a data original pode ser informada manualmente. '
+              'A leitura automática de EXIF e metadados de vídeos ficará para outra etapa.'),
         ],
       ),
     );

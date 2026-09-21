@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../../core/sharing/media_share_service.dart';
 
 import '../tags/media_tag_edit_button.dart';
+import '../tags/media_info_menu.dart';
 
 class CapturedPhotoPage extends StatefulWidget {
   const CapturedPhotoPage({
@@ -74,6 +75,7 @@ class _CapturedPhotoPageState
             mediaPath: widget.photoPath,
           ),
 
+          MediaInfoMenu(mediaPath: widget.photoPath),
           // Compartilhar fotografia.
           IconButton(
             tooltip: 'Compartilhar foto',

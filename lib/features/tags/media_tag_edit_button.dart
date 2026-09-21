@@ -81,7 +81,6 @@ class _MediaTagEditButtonState
                   for (final tag in currentTags)
                     if (!groupIds.contains(tag.id)) tag,
                 ],
-                lockedTagIds: groupIds,
               ),
             ),
           );
@@ -91,12 +90,33 @@ class _MediaTagEditButtonState
       // O usuário fechou sem concluir.
       if (!mounted || selected == null) return;
 
-      // Salva a nova seleção no banco.
-      await _catalog.setTagsForMedia(
-        widget.mediaPath,
-        selected.where((tag) => !groupIds.contains(tag.id))
-            .map((tag) => tag.id).toList(),
-      );
+      // Se retirar uma tag herdada, a mídia sai do grupo.
+      // As demais tags escolhidas tornam-se individuais nessa mídia.
+      final chosenIds = selected.map((tag) => tag.id).toSet();
+      final removedInherited = groupIds.any((id) => !chosenIds.contains(id));
+      if (removedInherited && group != null) {
+        final approved = await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Retirar mídia do grupo?'),
+            content: Text('Você retirou uma tag herdada de "${group.name}". '
+                'Para não alterar as outras mídias, esta mídia sairá do grupo. '
+                'O arquivo será mantido.'),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancelar')),
+              FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Retirar do grupo')),
+            ],
+          ),
+        );
+        if (approved != true) return;
+        await _catalog.removeMediaFromGroup(widget.mediaPath);
+        await _catalog.setTagsForMedia(widget.mediaPath, chosenIds.toList());
+      } else {
+        await _catalog.setTagsForMedia(
+          widget.mediaPath,
+          chosenIds.difference(groupIds).toList(),
+        );
+      }
 
       if (!mounted) return;
 

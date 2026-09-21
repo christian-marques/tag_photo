@@ -11,10 +11,13 @@ import '../capture/captured_video_page.dart';
 import '../gallery_import/gallery_import_page.dart';
 import 'existing_media_picker_page.dart';
 import 'groups_page.dart';
+import 'group_actions_menu.dart';
 
 class GroupDetailPage extends StatefulWidget {
-  const GroupDetailPage({super.key, required this.groupId});
+  const GroupDetailPage({super.key, required this.groupId, this.matchingPaths});
   final String groupId;
+  /// Quando aberto pela busca, exibe inicialmente só os resultados filtrados.
+  final Set<String>? matchingPaths;
 
   @override
   State<GroupDetailPage> createState() => _GroupDetailPageState();
@@ -24,6 +27,7 @@ class _GroupDetailPageState extends State<GroupDetailPage> {
   final _catalog = MediaCatalog.instance;
   late Future<MediaGroup?> _group;
   late Future<List<GroupMedia>> _media;
+  bool _showAll = false;
 
   @override
   void initState() {
@@ -92,6 +96,22 @@ class _GroupDetailPageState extends State<GroupDetailPage> {
         final media = items[index].media;
         return InkWell(
           onTap: () => _openMedia(media),
+          onLongPress: () async {
+            final yes = await showDialog<bool>(
+              context: context,
+              builder: (ctx) => AlertDialog(
+                title: const Text('Retirar mídia deste grupo?'),
+                content: const Text('A mídia será mantida na biblioteca. Tags individuais permanecem.'),
+                actions: [
+                  TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
+                  FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Retirar')),
+                ],
+              ),
+            );
+            if (yes != true || !mounted) return;
+            await _catalog.removeMediaFromGroup(media.file.path);
+            if (mounted) _reload();
+          },
           child: ClipRRect(
             borderRadius: BorderRadius.circular(8),
             child: media.kind == MediaKind.video
@@ -113,7 +133,21 @@ class _GroupDetailPageState extends State<GroupDetailPage> {
       builder: (context, groupSnapshot) {
         final group = groupSnapshot.data;
         return Scaffold(
-          appBar: AppBar(title: Text(group?.name ?? 'Grupo')),
+          appBar: AppBar(
+            title: Text(group?.name ?? 'Grupo'),
+            actions: [
+              if (group != null) GroupActionsMenu(
+                group: group,
+                onChanged: (deleted) {
+                  if (deleted) {
+                    Navigator.pop(context);
+                  } else {
+                    _reload();
+                  }
+                },
+              ),
+            ],
+          ),
           body: !groupSnapshot.hasData
               ? const Center(child: CircularProgressIndicator())
               : group == null
@@ -152,23 +186,31 @@ class _GroupDetailPageState extends State<GroupDetailPage> {
                             if (!snapshot.hasData) {
                               return const Center(child: CircularProgressIndicator());
                             }
-                            final media = snapshot.data!;
+                            final allMedia = snapshot.data!;
+                            final media = !_showAll && widget.matchingPaths != null
+                                ? allMedia.where((item) => widget.matchingPaths!.contains(item.media.file.path)).toList()
+                                : allMedia;
                             if (media.isEmpty) {
                               return const Padding(
                                 padding: EdgeInsets.all(20),
-                                child: Text('Ainda não há mídias neste grupo.'),
+                                child: Text('Nenhuma mídia corresponde ao filtro neste grupo.'),
                               );
                             }
                             final byDate = <String, List<GroupMedia>>{};
                             for (final item in media) {
-                              final key = groupDate(item.date);
+                              final key = item.date == null ? 'Data não informada' : groupDate(item.date!);
                               byDate.putIfAbsent(key, () => []).add(item);
                             }
                             return Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text('${media.length} mídias • '
-                                    '${groupDate(media.last.date)} – ${groupDate(media.first.date)}',
+                                if (widget.matchingPaths != null && !_showAll)
+                                  TextButton.icon(
+                                    onPressed: () => setState(() => _showAll = true),
+                                    icon: const Icon(Icons.filter_alt_off),
+                                    label: Text('Mostrando ${media.length} resultado(s) · Ver todas'),
+                                  ),
+                                Text('${media.length} mídias',
                                     style: Theme.of(context).textTheme.titleMedium),
                                 const SizedBox(height: 12),
                                 for (final entry in byDate.entries) ...[

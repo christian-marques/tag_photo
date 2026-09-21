@@ -3,10 +3,8 @@ import 'package:flutter/material.dart';
 
 import 'features/capture/camera_page.dart';
 
-import 'features/media_library/media_library_page.dart';
 
 import 'features/search/search_page.dart';
-import 'features/groups/groups_page.dart';
 import 'features/gallery_import/gallery_import_page.dart';
 
 void main() {
@@ -129,40 +127,6 @@ class HomePage extends StatelessWidget {
               icon: const Icon(Icons.search),
 
               label: const Text('Buscar fotos e vídeos'),
-            ),
-
-            const SizedBox(height: 16),
-            OutlinedButton.icon(
-              onPressed: () => Navigator.push<void>(
-                context,
-                MaterialPageRoute(builder: (_) => const GroupsPage()),
-              ),
-              icon: const Icon(Icons.folder_outlined),
-              label: const Text('Meus grupos'),
-            ),
-
-            // MINHAS MÍDIAS
-
-            const SizedBox(height: 16),
-
-            OutlinedButton.icon(
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) =>
-                        const MediaLibraryPage(),
-                  ),
-                );
-              },
-
-              icon: const Icon(
-                Icons.perm_media_outlined,
-              ),
-
-              label: const Text(
-                'Minhas mídias',
-              ),
             ),
 
           ],
