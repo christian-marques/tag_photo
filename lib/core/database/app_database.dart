@@ -99,6 +99,27 @@ class MediaTags extends Table {
   };
 }
 
+
+/// Conjunto de mídias que pode receber novos itens em qualquer data.
+class PhotoGroups extends Table {
+  TextColumn get id => text()();
+  TextColumn get name => text()();
+  DateTimeColumn get createdAt => dateTime()();
+  DateTimeColumn get updatedAt => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
+/// Tags compartilhadas por todas as mídias de um grupo.
+class GroupTags extends Table {
+  TextColumn get groupId => text().references(PhotoGroups, #id)();
+  TextColumn get tagId => text().references(Tags, #id)();
+
+  @override
+  Set<Column> get primaryKey => {groupId, tagId};
+}
+
 // ==========================================
 // BANCO DE DADOS PRINCIPAL
 // ==========================================
@@ -109,6 +130,8 @@ class MediaTags extends Table {
     MediaItems,
     Tags,
     MediaTags,
+    PhotoGroups,
+    GroupTags,
   ],
 )
 class AppDatabase extends _$AppDatabase {
@@ -123,7 +146,7 @@ class AppDatabase extends _$AppDatabase {
   // Esta versão acrescenta Tags e MediaTags.
 
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 3;
 
   @override
   MigrationStrategy get migration {
@@ -146,6 +169,10 @@ class AppDatabase extends _$AppDatabase {
           await migrator.createTable(tags);
 
           await migrator.createTable(mediaTags);
+        }
+        if (from < 3) {
+          await migrator.createTable(photoGroups);
+          await migrator.createTable(groupTags);
         }
       },
     );

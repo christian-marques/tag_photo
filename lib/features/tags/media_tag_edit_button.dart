@@ -39,10 +39,9 @@ class _MediaTagEditButtonState
       await widget.beforeOpen?.call();
 
       // Carrega as tags atuais da mídia.
-      final currentTags =
-          await _catalog.getTagsForMedia(
-        widget.mediaPath,
-      );
+      final currentTags = await _catalog.getTagsForMedia(widget.mediaPath);
+      final group = await _catalog.getGroupForMedia(widget.mediaPath);
+      final groupIds = group?.tags.map((tag) => tag.id).toSet() ?? <String>{};
 
       if (!mounted) return;
 
@@ -77,7 +76,12 @@ class _MediaTagEditButtonState
               ).toDouble(),
 
               child: CameraTagPicker(
-                initialSelection: currentTags,
+                initialSelection: [
+                  ...?group?.tags,
+                  for (final tag in currentTags)
+                    if (!groupIds.contains(tag.id)) tag,
+                ],
+                lockedTagIds: groupIds,
               ),
             ),
           );
@@ -90,7 +94,8 @@ class _MediaTagEditButtonState
       // Salva a nova seleção no banco.
       await _catalog.setTagsForMedia(
         widget.mediaPath,
-        selected.map((tag) => tag.id).toList(),
+        selected.where((tag) => !groupIds.contains(tag.id))
+            .map((tag) => tag.id).toList(),
       );
 
       if (!mounted) return;

@@ -6,6 +6,8 @@ import 'features/capture/camera_page.dart';
 import 'features/media_library/media_library_page.dart';
 
 import 'features/search/search_page.dart';
+import 'features/groups/groups_page.dart';
+import 'features/gallery_import/gallery_import_page.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -47,8 +49,7 @@ class HomePage extends StatelessWidget {
 
       body: Padding(
         padding: const EdgeInsets.all(24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+        child: ListView(
           children: [
             const SizedBox(height: 30),
 
@@ -103,7 +104,10 @@ class HomePage extends StatelessWidget {
             // IMPORTAR DA GALERIA
 
             OutlinedButton.icon(
-              onPressed: null,
+              onPressed: () => Navigator.push<void>(
+                context,
+                MaterialPageRoute(builder: (_) => const GalleryImportPage()),
+              ),
               icon: const Icon(Icons.photo_library),
               label: const Text('Adicionar fotos e vídeos'),
             ),
@@ -125,6 +129,16 @@ class HomePage extends StatelessWidget {
               icon: const Icon(Icons.search),
 
               label: const Text('Buscar fotos e vídeos'),
+            ),
+
+            const SizedBox(height: 16),
+            OutlinedButton.icon(
+              onPressed: () => Navigator.push<void>(
+                context,
+                MaterialPageRoute(builder: (_) => const GroupsPage()),
+              ),
+              icon: const Icon(Icons.folder_outlined),
+              label: const Text('Meus grupos'),
             ),
 
             // MINHAS MÍDIAS

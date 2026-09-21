@@ -7,9 +7,11 @@ class CameraTagPicker extends StatefulWidget {
   const CameraTagPicker({
     super.key,
     required this.initialSelection,
+    this.lockedTagIds = const {},
   });
 
   final List<MediaTag> initialSelection;
+  final Set<String> lockedTagIds;
 
   @override
   State<CameraTagPicker> createState() =>
@@ -74,6 +76,7 @@ class _CameraTagPickerState extends State<CameraTagPicker> {
   // Adiciona ou remove uma tag da seleção.
 
   void _toggleTag(MediaTag tag) {
+    if (widget.lockedTagIds.contains(tag.id)) return;
     setState(() {
       if (_isSelected(tag)) {
         _selectedTags.removeWhere(
@@ -260,9 +263,9 @@ class _CameraTagPickerState extends State<CameraTagPicker> {
 
                           selected: true,
 
-                          onDeleted: () {
-                            _toggleTag(tag);
-                          },
+                          onDeleted: widget.lockedTagIds.contains(tag.id)
+                              ? null
+                              : () => _toggleTag(tag),
                         ),
                       );
                     }).toList(),
@@ -312,9 +315,9 @@ class _CameraTagPickerState extends State<CameraTagPicker> {
                                 ListTileControlAffinity
                                     .leading,
 
-                            onChanged: (_) {
-                              _toggleTag(tag);
-                            },
+                            onChanged: widget.lockedTagIds.contains(tag.id)
+                                ? null
+                                : (_) => _toggleTag(tag),
                           ),
 
                         if (filteredTags.isEmpty && !canCreate)

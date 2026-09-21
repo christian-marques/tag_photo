@@ -10,9 +10,11 @@ import 'captured_video_page.dart';
 import '../../core/storage/media_storage.dart';
 import '../../data/media_catalog.dart';
 import 'camera_tag_picker.dart';
+import '../groups/group_picker.dart';
 
 class CameraPage extends StatefulWidget {
-  const CameraPage({super.key});
+  const CameraPage({super.key, this.initialGroupId});
+  final String? initialGroupId;
 
   @override
   State<CameraPage> createState() => _CameraPageState();
@@ -25,6 +27,8 @@ class _CameraPageState extends State<CameraPage>
 
   // Tags selecionadas para as próximas capturas.
   List<MediaTag> _selectedTags = [];
+  MediaGroup? _activeGroup;
+  bool _loadingInitialGroup = false;
 
   CameraController? _controller;
 
@@ -77,6 +81,39 @@ class _CameraPageState extends State<CameraPage>
     WidgetsBinding.instance.addObserver(this);
 
     _setupCamera();
+    if (widget.initialGroupId != null) _loadInitialGroup();
+  }
+
+  Future<void> _loadInitialGroup() async {
+    setState(() => _loadingInitialGroup = true);
+    try {
+      final group = await _mediaCatalog.getGroup(widget.initialGroupId!);
+      if (!mounted) return;
+      setState(() {
+        _activeGroup = group;
+        _selectedTags = List.of(group?.tags ?? []);
+      });
+    } catch (error) {
+      _showMessage('Não foi possível abrir o grupo: $error');
+    } finally {
+      if (mounted) setState(() => _loadingInitialGroup = false);
+    }
+  }
+
+  Future<void> _chooseGroup() async {
+    if (_loadingInitialGroup || _isInitializing || _isTakingPicture ||
+        _isRecording || _isChangingRecording) {
+      return;
+    }
+    final choice = await chooseGroup(context, initialTags: _selectedTags);
+    if (!mounted || choice == null) return;
+    setState(() {
+      _activeGroup = choice.group;
+      if (_activeGroup != null) {
+        // Ao mudar de grupo, carrega somente o conjunto padrão do novo grupo.
+        _selectedTags = List.of(_activeGroup!.tags);
+      }
+    });
   }
 
   // ==================================================
@@ -250,6 +287,7 @@ class _CameraPageState extends State<CameraPage>
 
             child: CameraTagPicker(
               initialSelection: _selectedTags,
+              lockedTagIds: _activeGroup?.tags.map((t) => t.id).toSet() ?? {},
             ),
           ),
         );
@@ -259,7 +297,11 @@ class _CameraPageState extends State<CameraPage>
     if (!mounted || selected == null) return;
 
     setState(() {
-      _selectedTags = selected;
+      _selectedTags = [
+        ...?_activeGroup?.tags,
+        for (final tag in selected)
+          if (!(_activeGroup?.tags.any((g) => g.id == tag.id) ?? false)) tag,
+      ];
     });
   }
 
@@ -275,7 +317,7 @@ class _CameraPageState extends State<CameraPage>
         !controller.value.isInitialized ||
         _isInitializing ||
         _isRecording ||
-        _isChangingRecording) {
+        _isChangingRecording || _loadingInitialGroup) {
       return;
     }
 
@@ -356,8 +398,11 @@ class _CameraPageState extends State<CameraPage>
         capturedVideo.path,
 
         kind: MediaKind.video,
+        groupId: _activeGroup?.id,
 
+        // Tags do grupo são herdadas na busca; gravamos somente as extras.
         tagIds: _selectedTags
+            .where((tag) => !(_activeGroup?.tags.any((g) => g.id == tag.id) ?? false))
             .map((tag) => tag.id)
             .toList(),
       );
@@ -440,7 +485,7 @@ class _CameraPageState extends State<CameraPage>
         !controller.value.isInitialized ||
         _isTakingPicture ||
         _isInitializing ||
-        _isShowingPhoto) {
+        _isShowingPhoto || _loadingInitialGroup) {
       return;
     }
 
@@ -464,8 +509,11 @@ class _CameraPageState extends State<CameraPage>
         capturedPhoto.path,
 
         kind: MediaKind.photo,
+        groupId: _activeGroup?.id,
 
+        // Tags do grupo são herdadas na busca; gravamos somente as extras.
         tagIds: _selectedTags
+            .where((tag) => !(_activeGroup?.tags.any((g) => g.id == tag.id) ?? false))
             .map((tag) => tag.id)
             .toList(),
       );
@@ -1315,6 +1363,28 @@ class _CameraPageState extends State<CameraPage>
 
             
             // ==========================================
+            // GRUPO ATIVO (PODE CONTINUAR EM OUTRO DIA)
+            // ==========================================
+            Container(
+              width: double.infinity,
+              color: Colors.black,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: TextButton.icon(
+                onPressed: _isRecording || _isChangingRecording ||
+                        _isTakingPicture || _loadingInitialGroup
+                    ? null : _chooseGroup,
+                icon: const Icon(Icons.folder_outlined, size: 18),
+                label: Text(_loadingInitialGroup ? 'Carregando grupo...' :
+                    _activeGroup?.name ?? 'Sem grupo · escolher/criar',
+                    maxLines: 1, overflow: TextOverflow.ellipsis),
+                style: TextButton.styleFrom(
+                  alignment: Alignment.centerLeft,
+                  foregroundColor: Colors.white,
+                ),
+              ),
+            ),
+
+            // ==========================================
             // TAGS ATIVAS DA CÂMERA
             // ==========================================
 
@@ -1351,7 +1421,8 @@ class _CameraPageState extends State<CameraPage>
 
                           deleteIconColor: Colors.white,
 
-                          onDeleted: _isRecording
+                          onDeleted: _isRecording ||
+                              (_activeGroup?.tags.any((g) => g.id == tag.id) ?? false)
                               ? null
                               : () {
                                   setState(() {

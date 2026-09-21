@@ -20,6 +20,33 @@ class MediaTag {
   final String name;
 }
 
+/// Grupo reutilizável, não precisa ser encerrado ao virar o dia.
+class MediaGroup {
+  const MediaGroup({
+    required this.id,
+    required this.name,
+    required this.createdAt,
+    required this.tags,
+    required this.mediaCount,
+    this.firstMediaAt,
+    this.lastMediaAt,
+  });
+
+  final String id;
+  final String name;
+  final DateTime createdAt;
+  final List<MediaTag> tags;
+  final int mediaCount;
+  final DateTime? firstMediaAt;
+  final DateTime? lastMediaAt;
+}
+
+class GroupMedia {
+  const GroupMedia({required this.media, required this.date});
+  final SavedMedia media;
+  final DateTime date;
+}
+
 class MediaCatalog {
   MediaCatalog._();
 
@@ -44,6 +71,8 @@ class MediaCatalog {
 
     // Tags selecionadas na câmera.
     List<String> tagIds = const [],
+    String? groupId,
+    bool importedFromGallery = false,
   }) async {
     // Primeiro salva o arquivo original.
 
@@ -61,11 +90,10 @@ class MediaCatalog {
       await _registerMedia(
         file: savedFile,
         kind: kind,
-        capturedAt: now,
+        capturedAt: importedFromGallery ? null : now,
         addedAt: now,
+        groupId: groupId,
       );
-
-      if (tagIds.isEmpty) return;
 
       // Recupera o ID da mídia recém-cadastrada.
 
@@ -81,15 +109,15 @@ class MediaCatalog {
       // Associa todas as tags selecionadas à mídia.
 
       for (final tagId in tagIds.toSet()) {
-        await _database
-            .into(_database.mediaTags)
-            .insert(
-              MediaTagsCompanion.insert(
-                mediaId: mediaRecord.id,
-                tagId: tagId,
-              ),
-              mode: InsertMode.insertOrIgnore,
-            );
+        await _database.into(_database.mediaTags).insert(
+          MediaTagsCompanion.insert(mediaId: mediaRecord.id, tagId: tagId),
+          mode: InsertMode.insertOrIgnore,
+        );
+      }
+      if (groupId != null) {
+        await (_database.update(_database.photoGroups)
+              ..where((g) => g.id.equals(groupId)))
+            .write(PhotoGroupsCompanion(updatedAt: Value(now)));
       }
     });
 
@@ -105,6 +133,7 @@ class MediaCatalog {
     required MediaKind kind,
     required DateTime? capturedAt,
     required DateTime addedAt,
+    String? groupId,
   }) async {
     final now = DateTime.now();
 
@@ -121,6 +150,7 @@ class MediaCatalog {
         // Caminho do arquivo no celular.
 
         localPath: file.path,
+        groupId: Value(groupId),
 
         // Datas da mídia.
 
@@ -363,95 +393,56 @@ class MediaCatalog {
   // BUSCAR MÍDIAS POR MÚLTIPLAS TAGS
   // ==========================================
 
-  Future<List<SavedMedia>> searchMediaByTags(
-    List<String> tagIds,
-  ) async {
-    // Garante que mídias antigas sejam cadastradas.
+  Future<List<SavedMedia>> searchMediaByTags(List<String> tagIds) async {
     await _indexExistingMedia();
+    final selected = tagIds.toSet();
+    if (selected.isEmpty) return getSavedMedia();
 
-    // Sem filtros: retorna todas as mídias.
-    if (tagIds.isEmpty) {
-      return getSavedMedia();
-    }
-
-    // Elimina IDs repetidos.
-    final selectedIds = tagIds.toSet().toList();
-
-    // Busca as relações entre as tags selecionadas
-    // e as mídias cadastradas.
-
-    final relations = await (
-      _database.select(_database.mediaTags)
-        ..where(
-          (row) => row.tagId.isIn(selectedIds),
-        )
-    ).get();
-
-    // Organiza as tags encontradas por mídia.
+    final records = await _database.select(_database.mediaItems).get();
+    final mediaRelations = await _database.select(_database.mediaTags).get();
+    final groupRelations = await _database.select(_database.groupTags).get();
 
     final tagsByMedia = <String, Set<String>>{};
-
-    for (final relation in relations) {
-      tagsByMedia
-          .putIfAbsent(
-            relation.mediaId,
-            () => <String>{},
-          )
+    for (final relation in mediaRelations) {
+      tagsByMedia.putIfAbsent(relation.mediaId, () => <String>{})
+          .add(relation.tagId);
+    }
+    final tagsByGroup = <String, Set<String>>{};
+    for (final relation in groupRelations) {
+      tagsByGroup.putIfAbsent(relation.groupId, () => <String>{})
           .add(relation.tagId);
     }
 
-    // Mantém apenas mídias que possuem
-    // TODAS as tags selecionadas.
-
-    final matchingIds = tagsByMedia.entries
-        .where(
-          (entry) =>
-              entry.value.containsAll(selectedIds),
-        )
-        .map((entry) => entry.key)
-        .toList();
-
-    if (matchingIds.isEmpty) {
-      return [];
-    }
-
-    // Recupera os registros correspondentes.
-
-    final records = await (
-      _database.select(_database.mediaItems)
-        ..where(
-          (row) => row.id.isIn(matchingIds),
-        )
-        ..orderBy([
-          (row) => OrderingTerm.desc(
-            row.addedAt,
-          ),
-        ])
-    ).get();
+    final matched = records.where((media) {
+      final effective = <String>{
+        ...?tagsByMedia[media.id],
+        ...?tagsByGroup[media.groupId],
+      };
+      return effective.containsAll(selected);
+    }).toList()
+      ..sort((a, b) => b.addedAt.compareTo(a.addedAt));
 
     final result = <SavedMedia>[];
-
-    for (final record in records) {
+    for (final record in matched) {
       final file = File(record.localPath);
-
-      if (!await file.exists()) {
-        continue;
-      }
-
-      result.add(
-        SavedMedia(
-          file: file,
-          kind: record.kind == MediaKind.video.name
-              ? MediaKind.video
-              : MediaKind.photo,
-        ),
-      );
+      if (!await file.exists()) continue;
+      result.add(SavedMedia(
+        file: file,
+        kind: record.kind == MediaKind.video.name
+            ? MediaKind.video : MediaKind.photo,
+      ));
     }
-
     return result;
   }
 
-  
+  Future<MediaGroup?> getGroupForMedia(String mediaPath) async {
+    final row = await (_database.select(_database.mediaItems)
+          ..where((m) => m.localPath.equals(mediaPath)))
+        .getSingleOrNull();
+    if (row?.groupId == null) return null;
+    return getGroup(row!.groupId!);
+  }
+
   // ==========================================
   // CONSULTAR AS TAGS DE UMA MÍDIA
   // ==========================================
@@ -548,5 +539,122 @@ class MediaCatalog {
       );
     });
   }
+
+  // ==========================================
+  // GRUPOS: criar, consultar, atualizar, reutilizar
+  // ==========================================
+
+  Future<MediaGroup> createGroup(String name, List<String> tagIds) async {
+    final clean = name.trim();
+    if (clean.isEmpty) throw ArgumentError('Informe o nome do grupo.');
+    final id = _uuid.v4();
+    final now = DateTime.now();
+    await _database.transaction(() async {
+      await _database.into(_database.photoGroups).insert(
+        PhotoGroupsCompanion.insert(
+          id: id, name: clean, createdAt: now, updatedAt: now,
+        ),
+      );
+      for (final tagId in tagIds.toSet()) {
+        await _database.into(_database.groupTags).insert(
+          GroupTagsCompanion.insert(groupId: id, tagId: tagId),
+          mode: InsertMode.insertOrIgnore,
+        );
+      }
+    });
+    return (await getGroup(id))!;
+  }
+
+  Future<List<MediaGroup>> getGroups() async {
+    await _indexExistingMedia();
+    final groups = await (_database.select(_database.photoGroups)
+          ..orderBy([(g) => OrderingTerm.desc(g.updatedAt)]))
+        .get();
+    final links = await _database.select(_database.groupTags).get();
+    final tags = await getAllTags();
+    final tagsById = {for (final tag in tags) tag.id: tag};
+    final allMedia = await _database.select(_database.mediaItems).get();
+    return groups.map((group) {
+      final items = allMedia.where((m) => m.groupId == group.id).toList();
+      final dates = items.map((m) => m.capturedAt ?? m.addedAt).toList()
+        ..sort();
+      return MediaGroup(
+        id: group.id,
+        name: group.name,
+        createdAt: group.createdAt,
+        tags: [for (final link in links)
+          if (link.groupId == group.id && tagsById.containsKey(link.tagId))
+            tagsById[link.tagId]!],
+        mediaCount: items.length,
+        firstMediaAt: dates.isEmpty ? null : dates.first,
+        lastMediaAt: dates.isEmpty ? null : dates.last,
+      );
+    }).toList();
+  }
+
+  Future<MediaGroup?> getGroup(String id) async {
+    final groups = await getGroups();
+    for (final group in groups) {
+      if (group.id == id) return group;
+    }
+    return null;
+  }
+
+  Future<void> setGroupTags(String groupId, List<String> tagIds) async {
+    final now = DateTime.now();
+    await _database.transaction(() async {
+      await (_database.delete(_database.groupTags)
+            ..where((r) => r.groupId.equals(groupId))).go();
+      for (final tagId in tagIds.toSet()) {
+        await _database.into(_database.groupTags).insert(
+          GroupTagsCompanion.insert(groupId: groupId, tagId: tagId),
+        );
+      }
+      await (_database.update(_database.photoGroups)
+            ..where((g) => g.id.equals(groupId)))
+          .write(PhotoGroupsCompanion(updatedAt: Value(now)));
+    });
+  }
+
+  Future<List<GroupMedia>> getMediaInGroup(String groupId) async {
+    await _indexExistingMedia();
+    final rows = await (_database.select(_database.mediaItems)
+          ..where((m) => m.groupId.equals(groupId)))
+        .get();
+    rows.sort((a, b) => (b.capturedAt ?? b.addedAt)
+        .compareTo(a.capturedAt ?? a.addedAt));
+    final output = <GroupMedia>[];
+    for (final row in rows) {
+      final file = File(row.localPath);
+      if (!await file.exists()) continue;
+      output.add(GroupMedia(
+        media: SavedMedia(file: file,
+          kind: row.kind == MediaKind.video.name
+              ? MediaKind.video : MediaKind.photo),
+        date: row.capturedAt ?? row.addedAt,
+      ));
+    }
+    return output;
+  }
+
+  /// Permite incluir mídias antigas no grupo sem copiar seus arquivos.
+  /// Uma mídia pertence no máximo a um grupo; tags individuais são preservadas.
+  Future<void> attachMediaToGroup(
+      String groupId, List<String> mediaPaths) async {
+    await _indexExistingMedia();
+    final now = DateTime.now();
+    await _database.transaction(() async {
+      for (final path in mediaPaths.toSet()) {
+        await (_database.update(_database.mediaItems)
+              ..where((m) => m.localPath.equals(path)))
+            .write(MediaItemsCompanion(
+              groupId: Value(groupId), updatedAt: Value(now)));
+      }
+      await (_database.update(_database.photoGroups)
+            ..where((g) => g.id.equals(groupId)))
+          .write(PhotoGroupsCompanion(updatedAt: Value(now)));
+    });
+  }
+
 
 }
