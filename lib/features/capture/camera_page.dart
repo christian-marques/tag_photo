@@ -10,7 +10,6 @@ import 'captured_video_page.dart';
 import '../../core/storage/media_storage.dart';
 import '../../data/media_catalog.dart';
 import 'camera_tag_picker.dart';
-import '../groups/group_picker.dart';
 
 class CameraPage extends StatefulWidget {
   const CameraPage({super.key, this.initialGroupId});
@@ -29,6 +28,10 @@ class _CameraPageState extends State<CameraPage>
   List<MediaTag> _selectedTags = [];
   MediaGroup? _activeGroup;
   bool _loadingInitialGroup = false;
+  bool _resumingExistingSession = false;
+  bool _creatingSession = false;
+  String? _automaticSessionTags;
+
 
   CameraController? _controller;
 
@@ -91,6 +94,7 @@ class _CameraPageState extends State<CameraPage>
       if (!mounted) return;
       setState(() {
         _activeGroup = group;
+        _resumingExistingSession = group != null;
         _selectedTags = List.of(group?.tags ?? []);
       });
     } catch (error) {
@@ -100,20 +104,49 @@ class _CameraPageState extends State<CameraPage>
     }
   }
 
-  Future<void> _chooseGroup() async {
+  // A câmera aberta pela Home inicia uma sessão automática na primeira captura.
+  // A câmera aberta por uma sessão da busca continua a sessão existente.
+  Future<void> _startNewSession() async {
     if (_loadingInitialGroup || _isInitializing || _isTakingPicture ||
-        _isRecording || _isChangingRecording) {
-      return;
-    }
-    final choice = await chooseGroup(context, initialTags: _selectedTags);
-    if (!mounted || choice == null) return;
+        _isRecording || _isChangingRecording || _creatingSession) return;
     setState(() {
-      _activeGroup = choice.group;
-      if (_activeGroup != null) {
-        // Ao mudar de grupo, carrega somente o conjunto padrão do novo grupo.
-        _selectedTags = List.of(_activeGroup!.tags);
-      }
+      _activeGroup = null;
+      _automaticSessionTags = null;
+      _resumingExistingSession = false;
     });
+  }
+
+  String get _tagSignature {
+    final sorted = _selectedTags.map((tag) => tag.id).toList()..sort();
+    return sorted.join('|');
+  }
+
+  Future<MediaGroup> _ensureCaptureSession() async {
+    if (_resumingExistingSession && _activeGroup != null) {
+      return _activeGroup!;
+    }
+    final signature = _tagSignature;
+    if (_activeGroup != null && _automaticSessionTags == signature) {
+      return _activeGroup!;
+    }
+    if (_creatingSession) {
+      throw StateError('Aguarde a criação da sessão anterior.');
+    }
+    _creatingSession = true;
+    try {
+      final created = await _mediaCatalog.createCaptureSession(
+        _selectedTags.map((tag) => tag.id).toList(),
+      );
+      if (mounted) {
+        setState(() {
+          _activeGroup = created;
+          _automaticSessionTags = signature;
+        });
+      }
+      return created;
+    } finally {
+      _creatingSession = false;
+    }
   }
 
   // ==================================================
@@ -287,7 +320,9 @@ class _CameraPageState extends State<CameraPage>
 
             child: CameraTagPicker(
               initialSelection: _selectedTags,
-              lockedTagIds: _activeGroup?.tags.map((t) => t.id).toSet() ?? {},
+              lockedTagIds: _resumingExistingSession
+                  ? (_activeGroup?.tags.map((t) => t.id).toSet() ?? {})
+                  : {},
             ),
           ),
         );
@@ -297,11 +332,13 @@ class _CameraPageState extends State<CameraPage>
     if (!mounted || selected == null) return;
 
     setState(() {
-      _selectedTags = [
-        ...?_activeGroup?.tags,
-        for (final tag in selected)
-          if (!(_activeGroup?.tags.any((g) => g.id == tag.id) ?? false)) tag,
-      ];
+      _selectedTags = _resumingExistingSession
+          ? [
+              ...?_activeGroup?.tags,
+              for (final tag in selected)
+                if (!(_activeGroup?.tags.any((g) => g.id == tag.id) ?? false)) tag,
+            ]
+          : List.of(selected);
     });
   }
 
@@ -393,12 +430,13 @@ class _CameraPageState extends State<CameraPage>
       // Salva uma cópia permanente do vídeo.
 
       
+      final session = await _ensureCaptureSession();
       final savedFile =
           await _mediaCatalog.saveCapturedMedia(
         capturedVideo.path,
 
         kind: MediaKind.video,
-        groupId: _activeGroup?.id,
+        groupId: session.id,
 
         // Tags do grupo são herdadas na busca; gravamos somente as extras.
         tagIds: _selectedTags
@@ -504,12 +542,13 @@ class _CameraPageState extends State<CameraPage>
       // permanente do aplicativo.
 
 
+      final session = await _ensureCaptureSession();
       final savedFile =
           await _mediaCatalog.saveCapturedMedia(
         capturedPhoto.path,
 
         kind: MediaKind.photo,
-        groupId: _activeGroup?.id,
+        groupId: session.id,
 
         // Tags do grupo são herdadas na busca; gravamos somente as extras.
         tagIds: _selectedTags
@@ -1372,10 +1411,10 @@ class _CameraPageState extends State<CameraPage>
               child: TextButton.icon(
                 onPressed: _isRecording || _isChangingRecording ||
                         _isTakingPicture || _loadingInitialGroup
-                    ? null : _chooseGroup,
-                icon: const Icon(Icons.folder_outlined, size: 18),
-                label: Text(_loadingInitialGroup ? 'Carregando grupo...' :
-                    _activeGroup?.name ?? 'Sem grupo · escolher/criar',
+                    ? null : _startNewSession,
+                icon: const Icon(Icons.collections_outlined, size: 18),
+                label: Text(_loadingInitialGroup ? 'Carregando sessão...' :
+                    _activeGroup?.name ?? 'Nova sessão automática',
                     maxLines: 1, overflow: TextOverflow.ellipsis),
                 style: TextButton.styleFrom(
                   alignment: Alignment.centerLeft,
@@ -1422,7 +1461,8 @@ class _CameraPageState extends State<CameraPage>
                           deleteIconColor: Colors.white,
 
                           onDeleted: _isRecording ||
-                              (_activeGroup?.tags.any((g) => g.id == tag.id) ?? false)
+                              (_resumingExistingSession &&
+                                  (_activeGroup?.tags.any((g) => g.id == tag.id) ?? false))
                               ? null
                               : () {
                                   setState(() {

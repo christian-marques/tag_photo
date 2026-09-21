@@ -134,7 +134,7 @@ class _GroupDetailPageState extends State<GroupDetailPage> {
         final group = groupSnapshot.data;
         return Scaffold(
           appBar: AppBar(
-            title: Text(group?.name ?? 'Grupo'),
+            title: Text(group?.name ?? 'Sessão'),
             actions: [
               if (group != null) GroupActionsMenu(
                 group: group,
@@ -157,7 +157,7 @@ class _GroupDetailPageState extends State<GroupDetailPage> {
                       children: [
                         Wrap(spacing: 6, runSpacing: 4, children: [
                           for (final tag in group.tags) Chip(label: Text(tag.name)),
-                          ActionChip(label: const Text('+ Tags do grupo'),
+                          ActionChip(label: const Text('+ Tags da sessão'),
                               onPressed: () => _editGroupTags(group)),
                         ]),
                         const SizedBox(height: 8),

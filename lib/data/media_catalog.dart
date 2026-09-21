@@ -720,6 +720,87 @@ class MediaCatalog {
     return result;
   }
 
+  /// Uma entrada na câmera cria uma sessão só na primeira captura.
+  /// Ao retomar uma sessão pela busca, o mesmo ID é reutilizado.
+  Future<MediaGroup> createCaptureSession(List<String> tagIds) async {
+    final time = DateTime.now();
+    final label = 'Sessão ${time.day.toString().padLeft(2, '0')}/'
+        '${time.month.toString().padLeft(2, '0')}/${time.year} '
+        '${time.hour.toString().padLeft(2, '0')}:'
+        '${time.minute.toString().padLeft(2, '0')}';
+    return createGroup(label, tagIds);
+  }
+
+  /// Aplica tags apenas às mídias escolhidas, sem apagar tags não selecionadas.
+  /// Se remover tag herdada da sessão, desassocia somente aquela mídia e
+  /// materializa as demais tags herdadas como individuais.
+  Future<void> modifyTagsInBatch(
+    List<String> mediaPaths, {
+    List<String> addTagIds = const [],
+    List<String> removeTagIds = const [],
+  }) async {
+    final add = addTagIds.toSet();
+    final remove = removeTagIds.toSet();
+    if (mediaPaths.isEmpty || (add.isEmpty && remove.isEmpty)) return;
+    await _indexExistingMedia();
+    final now = DateTime.now();
+    await _database.transaction(() async {
+      for (final path in mediaPaths.toSet()) {
+        final media = await (_database.select(_database.mediaItems)
+              ..where((m) => m.localPath.equals(path)))
+            .getSingleOrNull();
+        if (media == null) continue;
+        final groupId = media.groupId;
+        if (groupId != null && remove.isNotEmpty) {
+          final links = await (_database.select(_database.groupTags)
+                ..where((g) => g.groupId.equals(groupId))).get();
+          final inherited = links.map((e) => e.tagId).toSet();
+          if (inherited.intersection(remove).isNotEmpty) {
+            // Não alterar tags da sessão das outras mídias.
+            await (_database.update(_database.mediaItems)
+                  ..where((m) => m.id.equals(media.id)))
+                .write(MediaItemsCompanion(
+                  groupId: const Value(null), updatedAt: Value(now)));
+            for (final tagId in inherited.difference(remove)) {
+              await _database.into(_database.mediaTags).insert(
+                MediaTagsCompanion.insert(mediaId: media.id, tagId: tagId),
+                mode: InsertMode.insertOrIgnore,
+              );
+            }
+          }
+        }
+        if (remove.isNotEmpty) {
+          await (_database.delete(_database.mediaTags)
+                ..where((r) => r.mediaId.equals(media.id) & r.tagId.isIn(remove.toList())))
+              .go();
+        }
+        for (final tagId in add.difference(remove)) {
+          await _database.into(_database.mediaTags).insert(
+            MediaTagsCompanion.insert(mediaId: media.id, tagId: tagId),
+            mode: InsertMode.insertOrIgnore,
+          );
+        }
+        await (_database.update(_database.mediaItems)
+              ..where((m) => m.id.equals(media.id)))
+            .write(MediaItemsCompanion(updatedAt: Value(now)));
+      }
+    });
+  }
+
+  /// A seleção em lote pode mover mídias sem duplicar os arquivos.
+  Future<void> detachMediaInBatch(List<String> mediaPaths) async {
+    await _indexExistingMedia();
+    final now = DateTime.now();
+    await _database.transaction(() async {
+      for (final path in mediaPaths.toSet()) {
+        await (_database.update(_database.mediaItems)
+              ..where((m) => m.localPath.equals(path)))
+            .write(MediaItemsCompanion(
+              groupId: const Value(null), updatedAt: Value(now)));
+      }
+    });
+  }
+
   Future<DateTime?> getMediaCapturedAt(String mediaPath) async {
     await _indexExistingMedia();
     final row = await (_database.select(_database.mediaItems)

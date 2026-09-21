@@ -13,81 +13,43 @@ class GroupActionsMenu extends StatelessWidget {
   final void Function(bool deleted) onChanged;
 
   Future<void> _rename(BuildContext context) async {
-    String editedName = group.name;
-
-    final newName = await showDialog<String>(
+    var edited = group.name;
+    final name = await showDialog<String>(
       context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('Renomear grupo'),
-
-          content: TextFormField(
-            initialValue: group.name,
-            autofocus: true,
-            maxLength: 100,
-
-            decoration: const InputDecoration(
-              labelText: 'Nome do grupo',
-            ),
-
-            onChanged: (value) {
-              editedName = value;
-            },
-
-            onFieldSubmitted: (value) {
-              Navigator.of(dialogContext).pop(value.trim());
-            },
-          ),
-
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.of(dialogContext).pop();
-              },
-              child: const Text('Cancelar'),
-            ),
-
-            FilledButton(
-              onPressed: () {
-                Navigator.of(dialogContext).pop(
-                  editedName.trim(),
-                );
-              },
-              child: const Text('Salvar'),
-            ),
-          ],
-        );
-      },
-    );
-
-    if (!context.mounted ||
-        newName == null ||
-        newName.trim().isEmpty) {
-      return;
-    }
-
-    try {
-      await MediaCatalog.instance.renameGroup(
-        group.id,
-        newName.trim(),
-      );
-
-      if (!context.mounted) return;
-
-      onChanged(false);
-    } catch (error) {
-      if (!context.mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Não foi possível renomear: $error',
-          ),
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Renomear sessão'),
+        content: TextFormField(
+          initialValue: group.name,
+          autofocus: true,
+          maxLength: 100,
+          onChanged: (value) => edited = value,
+          onFieldSubmitted: (value) => Navigator.pop(dialogContext, value.trim()),
         ),
-      );
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, edited.trim()),
+            child: const Text('Salvar'),
+          ),
+        ],
+      ),
+    );
+    if (!context.mounted || name == null || name.isEmpty) return;
+    try {
+      await MediaCatalog.instance.renameGroup(group.id, name);
+      if (context.mounted) onChanged(false);
+    } catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Não foi possível renomear: $error')),
+        );
+      }
     }
   }
-  
+
   Future<void> _delete(BuildContext context) async {
     final approved = await showDialog<bool>(
       context: context,

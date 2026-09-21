@@ -8,6 +8,8 @@ import '../capture/captured_photo_page.dart';
 import '../capture/captured_video_page.dart';
 import '../groups/group_actions_menu.dart';
 import '../groups/group_detail_page.dart';
+import '../groups/group_picker.dart';
+import '../capture/camera_tag_picker.dart';
 
 class SearchPage extends StatefulWidget {
   const SearchPage({super.key});
@@ -53,6 +55,9 @@ class _SearchPageState extends State<SearchPage> {
   late Future<List<MediaTag>> _tagsFuture;
   late Future<List<_SearchRow>> _resultsFuture;
   String _query = '';
+  final Set<String> _chosenMediaPaths = <String>{};
+  bool _bulkBusy = false;
+  bool _selectionMode = false;
 
   @override
   void initState() {
@@ -107,6 +112,157 @@ class _SearchPageState extends State<SearchPage> {
     _selectedTags.removeWhere((selected) => selected.id == tag.id);
     _refresh();
   }
+
+  List<String> _pathsForRow(_SearchRow row) => row.group != null
+      ? row.items.map((item) => item.media.file.path).toList()
+      : [row.solo!.media.file.path];
+
+  bool _rowSelected(_SearchRow row) {
+    final paths = _pathsForRow(row);
+    return paths.isNotEmpty && paths.every(_chosenMediaPaths.contains);
+  }
+
+  void _toggleRow(_SearchRow row) {
+    final paths = _pathsForRow(row);
+    setState(() {
+      _selectionMode = true;
+      if (paths.every(_chosenMediaPaths.contains)) {
+        _chosenMediaPaths.removeAll(paths);
+      } else {
+        _chosenMediaPaths.addAll(paths);
+      }
+    });
+  }
+
+  void _exitSelection() => setState(() {
+    _chosenMediaPaths.clear();
+    _selectionMode = false;
+  });
+
+  Future<void> _performBatch(Future<void> Function(List<String>) operation) async {
+    if (_bulkBusy || _chosenMediaPaths.isEmpty) return;
+    final paths = _chosenMediaPaths.toList();
+    setState(() => _bulkBusy = true);
+    try {
+      await operation(paths);
+      if (!mounted) return;
+      _exitSelection();
+      _refresh();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Não foi possível aplicar a ação: $error')),
+      );
+    } finally {
+      if (mounted) setState(() => _bulkBusy = false);
+    }
+  }
+
+  Future<void> _newSessionFromSelection() async {
+    var label = '';
+    final title = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Nova sessão'),
+        content: TextFormField(
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'Nome opcional',
+            hintText: 'Ex.: Passeio, teste ou manutenção',
+          ),
+          onChanged: (value) => label = value,
+          onFieldSubmitted: (value) => Navigator.pop(ctx, value.trim()),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancelar')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, label.trim()),
+            child: const Text('Criar sessão')),
+        ],
+      ),
+    );
+    if (!mounted || title == null) return;
+    await _performBatch((paths) async {
+      final group = title.isEmpty
+          ? await _catalog.createCaptureSession(_selectedTags.map((t) => t.id).toList())
+          : await _catalog.createGroup(title, _selectedTags.map((t) => t.id).toList());
+      await _catalog.attachMediaToGroup(group.id, paths);
+    });
+  }
+
+  Future<void> _attachSelection() async {
+    final choice = await chooseGroup(context, initialTags: _selectedTags);
+    if (!mounted || choice == null) return;
+    await _performBatch((paths) async {
+      if (choice.group == null) {
+        await _catalog.detachMediaInBatch(paths);
+      } else {
+        await _catalog.attachMediaToGroup(choice.group!.id, paths);
+      }
+    });
+  }
+
+  Future<void> _changeSelectedTags({required bool add}) async {
+    final tags = await showModalBottomSheet<List<MediaTag>>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(ctx).bottom),
+        child: SizedBox(
+          height: MediaQuery.sizeOf(ctx).height * 0.62,
+          child: const CameraTagPicker(initialSelection: []),
+        ),
+      ),
+    );
+    if (!mounted || tags == null || tags.isEmpty) return;
+    final ids = tags.map((tag) => tag.id).toList();
+    if (!add) {
+      final confirm = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Remover tags das mídias selecionadas?'),
+          content: const Text('Se uma tag vier da sessão, somente a mídia afetada sairá dela. '
+              'Os arquivos e as demais tags serão preservados.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancelar')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Confirmar')),
+          ],
+        ),
+      );
+      if (!mounted || confirm != true) return;
+    }
+    await _performBatch((paths) => _catalog.modifyTagsInBatch(
+      paths,
+      addTagIds: add ? ids : const [],
+      removeTagIds: add ? const [] : ids,
+    ));
+  }
+
+  Widget _batchToolbar() => SafeArea(
+    top: false,
+    child: Padding(
+      padding: const EdgeInsets.all(10),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Text('${_chosenMediaPaths.length} mídia(s) selecionada(s)'),
+        const SizedBox(height: 6),
+        Wrap(alignment: WrapAlignment.center, spacing: 6, runSpacing: 4,
+          children: [
+            OutlinedButton.icon(onPressed: _bulkBusy ? null : _newSessionFromSelection,
+              icon: const Icon(Icons.create_new_folder_outlined), label: const Text('Nova sessão')),
+            OutlinedButton.icon(onPressed: _bulkBusy ? null : _attachSelection,
+              icon: const Icon(Icons.folder_open_outlined), label: const Text('Mover / retirar')),
+            OutlinedButton.icon(onPressed: _bulkBusy ? null : () => _changeSelectedTags(add: true),
+              icon: const Icon(Icons.add), label: const Text('Adicionar tags')),
+            OutlinedButton.icon(onPressed: _bulkBusy ? null : () => _changeSelectedTags(add: false),
+              icon: const Icon(Icons.remove), label: const Text('Remover tags')),
+          ],
+        ),
+      ]),
+    ),
+  );
 
   Future<void> _openMedia(MediaSearchEntry entry) async {
     final media = entry.media;
@@ -199,9 +355,14 @@ class _SearchPageState extends State<SearchPage> {
                 if (!group.tags.any((existing) => existing.id == tag.id)) tag,
           ];
     final uniqueTags = <String, MediaTag>{for (final tag in tags) tag.id: tag};
+    final selected = _rowSelected(row);
     return ListTile(
+      selected: selected,
+      onLongPress: () => _toggleRow(row),
       contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      leading: _thumbnail(sample.media),
+      leading: _selectionMode
+          ? Checkbox(value: selected, onChanged: (_) => _toggleRow(row))
+          : _thumbnail(sample.media),
       title: Text(group?.name ?? (solo!.media.kind == MediaKind.photo ? 'Foto sem grupo' : 'Vídeo sem grupo'),
           maxLines: 1, overflow: TextOverflow.ellipsis),
       subtitle: Column(
@@ -217,17 +378,40 @@ class _SearchPageState extends State<SearchPage> {
           ],
         ],
       ),
-      trailing: group == null
-          ? const Icon(Icons.chevron_right)
-          : GroupActionsMenu(group: group, onChanged: (_) => _refresh()),
-      onTap: () => group != null ? _openGroup(row) : _openMedia(solo!),
+      trailing: _selectionMode
+          ? Text('${_pathsForRow(row).length} mídias')
+          : group == null
+              ? const Icon(Icons.chevron_right)
+              : GroupActionsMenu(group: group, onChanged: (_) => _refresh()),
+      onTap: () => _selectionMode
+          ? _toggleRow(row)
+          : group != null ? _openGroup(row) : _openMedia(solo!),
     );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Buscar mídias')),
+      appBar: AppBar(
+        title: Text(_selectionMode ? 'Selecionar mídias' : 'Buscar mídias'),
+        leading: _selectionMode
+            ? IconButton(onPressed: _exitSelection, icon: const Icon(Icons.close))
+            : null,
+        actions: [
+          TextButton(
+            onPressed: _bulkBusy ? null : () => setState(() {
+              if (_selectionMode) {
+                _chosenMediaPaths.clear();
+              }
+              _selectionMode = !_selectionMode;
+            }),
+            child: Text(_selectionMode ? 'Cancelar' : 'Selecionar'),
+          ),
+        ],
+      ),
+      bottomNavigationBar: _selectionMode && _chosenMediaPaths.isNotEmpty
+          ? _batchToolbar()
+          : null,
       body: Column(
         children: [
           Padding(
